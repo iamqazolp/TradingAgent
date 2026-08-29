@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.sqlite
+*.sqlite-journal
+var/
+logs/
+.pytest_cache/
+# Session state that `oh` writes into the working directory.
+.openharness/

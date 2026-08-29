@@ -1,0 +1,27 @@
+[project]
+name = "ta-agent"
+version = "0.1.0"
+description = "Technical-analysis agent for Vietnamese stocks, on OpenHarness"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "mcp>=1.2",
+    "pydantic>=2.6",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# This is a non-package project (`package = false`), so the repo root has to be
+# importable for `data`, `indicators` and `mcp_server` to resolve under pytest.
+pythonpath = ["."]
+filterwarnings = ["error::RuntimeWarning"]

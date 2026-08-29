@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "ta-agent": {
+      "type": "stdio",
+      "command": "/Users/iamqazolp/Documents/Projects/TAOpenHarness/.venv/bin/python",
+      "args": ["-m", "mcp_server.server"],
+      "cwd": "/Users/iamqazolp/Documents/Projects/TAOpenHarness",
+      "env": {
+        "TA_AGENT_DB": "/Users/iamqazolp/Documents/Projects/TAOpenHarness/var/ta.sqlite",
+        "TA_AGENT_AUDIT_LOG": "/Users/iamqazolp/Documents/Projects/TAOpenHarness/logs/tool_calls.jsonl",
+        "TA_AGENT_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
