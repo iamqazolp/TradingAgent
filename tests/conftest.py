@@ -23,6 +23,9 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures"
 #: Neutral defaults. Every field the engine requires, so a test only has to
 #: supply the columns it actually cares about.
 DEFAULT_ROW: dict[str, float | int] = {
+    "open": 10_000.0,
+    "high": 10_000.0,
+    "low": 10_000.0,
     "close": 10_000.0,
     "total_trade": 100,
     "total_value": 1_000_000_000.0,
@@ -82,6 +85,12 @@ def build_rows(
             row["prev_close"] = columns["prev_close"][i]
         else:
             row["prev_close"] = rows[i - 1]["close"] if i else row["close"]
+        if "open" not in columns:
+            row["open"] = row["prev_close"]
+        if "high" not in columns:
+            row["high"] = max(row["close"], row["open"], row["prev_close"])
+        if "low" not in columns:
+            row["low"] = min(row["close"], row["open"], row["prev_close"])
         rows.append(row)
     return rows
 

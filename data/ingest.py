@@ -44,7 +44,14 @@ FIELD_MAP: dict[str, tuple[str, str]] = {
     "Symbol": ("ticker", "ticker"),
     "Date": ("date", "date"),
     "PricePreviousClose": ("prev_close", "price"),
+    "PriceOpen": ("open", "price_optional"),
+    "Open": ("open", "price_optional"),
+    "PriceHigh": ("high", "price_optional"),
+    "High": ("high", "price_optional"),
+    "PriceLow": ("low", "price_optional"),
+    "Low": ("low", "price_optional"),
     "PriceClose": ("close", "price"),
+    "Close": ("close", "price"),
     "TotalTrade": ("total_trade", "int"),
     "TotalValue": ("total_value", "float"),
     "TotalVolume": ("total_volume", "int"),
@@ -59,7 +66,12 @@ FIELD_MAP: dict[str, tuple[str, str]] = {
     "CurrentForeignRoom": ("foreign_room", "int"),
 }
 
-_DATE_FORMATS = (
+_DATETIME_FORMATS = (
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%Y-%m-%d %H:%M",
     "%Y-%m-%d",
     "%Y/%m/%d",
     "%d/%m/%Y",
@@ -141,16 +153,24 @@ def cast_price(value: Any, field_name: str) -> float:
 
 
 def parse_date(value: Any) -> str:
-    """Normalise the feed's date to an ISO ``YYYY-MM-DD`` string."""
-    if isinstance(value, (date, datetime)):
+    """Normalise the feed's date/datetime to an ISO date or datetime string."""
+    if isinstance(value, datetime):
+        if value.hour == 0 and value.minute == 0 and value.second == 0:
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, date):
         return value.strftime("%Y-%m-%d")
     text = None if value is None else str(value).strip()
     if not text:
         raise IngestError("missing Date")
-    text = text.split("T")[0].split(" ")[0]
-    for fmt in _DATE_FORMATS:
+    for fmt in _DATETIME_FORMATS:
         try:
-            return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
+            dt = datetime.strptime(text, fmt)
+            if dt.hour == 0 and dt.minute == 0 and dt.second == 0 and ("%H" not in fmt and "%M" not in fmt):
+                return dt.strftime("%Y-%m-%d")
+            if dt.hour != 0 or dt.minute != 0 or dt.second != 0:
+                return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return dt.strftime("%Y-%m-%d")
         except ValueError:
             continue
     raise IngestError(f"Date={value!r} is not a recognised date")
@@ -164,19 +184,52 @@ def parse_record(raw: dict) -> dict:
     row: dict[str, Any] = {}
     for raw_key, (column, kind) in FIELD_MAP.items():
         value = raw.get(raw_key)
+        if value is None and column in row:
+            continue
         if kind == "ticker":
             text = _clean(value)
             if not text:
                 raise IngestError("missing Symbol")
             row[column] = text.upper()
         elif kind == "date":
-            row[column] = parse_date(value)
+            if value is not None:
+                row[column] = parse_date(value)
         elif kind == "price":
-            row[column] = cast_price(value, raw_key)
+            if value is not None:
+                row[column] = cast_price(value, raw_key)
+        elif kind == "price_optional":
+            if value is not None and _clean(value) is not None:
+                row[column] = cast_price(value, raw_key)
         elif kind == "int":
-            row[column] = cast_int(value, raw_key, default=0)
+            if value is not None or column not in row:
+                row[column] = cast_int(value, raw_key, default=0)
         else:
-            row[column] = cast_float(value, raw_key, default=0.0)
+            if value is not None or column not in row:
+                row[column] = cast_float(value, raw_key, default=0.0)
+
+    if "date" not in row:
+        raise IngestError("missing Date")
+    if "close" not in row:
+        raise IngestError("missing PriceClose")
+    if "prev_close" not in row:
+        raise IngestError("missing PricePreviousClose")
+
+    # Fallbacks for missing open/high/low
+    if "open" not in row or row["open"] is None:
+        row["open"] = row["prev_close"]
+    if "high" not in row or row["high"] is None:
+        row["high"] = max(row["close"], row["open"], row["prev_close"])
+    if "low" not in row or row["low"] is None:
+        row["low"] = min(row["close"], row["open"], row["prev_close"])
+
+    # Validate OHLC geometry
+    if row["high"] < row["low"]:
+        raise IngestError(f"High ({row['high']}) cannot be lower than Low ({row['low']})")
+    if row["high"] < row["close"] - 1e-6 or row["high"] < row["open"] - 1e-6:
+        raise IngestError(f"High ({row['high']}) cannot be lower than Open ({row['open']}) or Close ({row['close']})")
+    if row["low"] > row["close"] + 1e-6 or row["low"] > row["open"] + 1e-6:
+        raise IngestError(f"Low ({row['low']}) cannot be higher than Open ({row['open']}) or Close ({row['close']})")
+
     return row
 
 

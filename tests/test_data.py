@@ -226,3 +226,60 @@ def test_sample_fixture_ingests_cleanly(conn, sample_payload):
     for ticker in report.tickers:
         for row in store.get_recent(conn, ticker, 5):
             assert isinstance(row["close"], float) and row["close"] > 0
+
+
+# --------------------------------------------------------------------------- OHLC & Timeframes
+
+
+def test_parse_record_accepts_explicit_ohlc_and_validates_geometry():
+    raw_ohlc = dict(
+        RAW,
+        PriceOpen="67,500",
+        PriceHigh="69,000",
+        PriceLow="67,000",
+        PriceClose="68,000",
+        PricePreviousClose="67,200",
+    )
+    row = ingest.parse_record(raw_ohlc)
+    assert row["open"] == pytest.approx(67_500.0)
+    assert row["high"] == pytest.approx(69_000.0)
+    assert row["low"] == pytest.approx(67_000.0)
+    assert row["close"] == pytest.approx(68_000.0)
+
+
+def test_parse_record_rejects_inverted_high_low():
+    bad_ohlc = dict(
+        RAW,
+        PriceHigh="65,000",
+        PriceLow="69,000",
+        PriceClose="68,000",
+    )
+    with pytest.raises(ingest.IngestError, match="cannot be lower than Low"):
+        ingest.parse_record(bad_ohlc)
+
+
+def test_store_timeframe_queries(conn):
+    raws = [
+        dict(
+            RAW,
+            Date=f"{day:02d}/01/2026",
+            PricePreviousClose="67,000",
+            PriceOpen=f"{67_000 + 100 * day}",
+            PriceHigh=f"{68_000 + 100 * day}",
+            PriceLow=f"{66_000 + 100 * day}",
+            PriceClose=f"{67_500 + 100 * day}",
+            TotalVolume="1,000",
+        )
+        for day in range(5, 15)
+    ]
+    ingest.ingest_records(raws, conn)
+    # Query weekly bars
+    weekly_recent = store.get_recent(conn, "VNM", 5, timeframe="1W")
+    assert len(weekly_recent) == 2
+    assert "open" in weekly_recent[0] and "high" in weekly_recent[0]
+    assert weekly_recent[0]["high"] >= weekly_recent[0]["close"]
+
+    # Query 3D bars
+    bars_3d = store.get_range(conn, "VNM", "2026-01-05", "2026-01-14", timeframe="3D")
+    assert len(bars_3d) >= 3
+

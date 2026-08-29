@@ -1,8 +1,8 @@
-"""SQLite store for daily trading statistics.
+"""SQLite store for trading statistics (hourly and daily).
 
 Single table, `daily_prices`, keyed on (ticker, date). Writes are upserts so
 re-ingesting the same day is idempotent. Reads return plain dicts in ascending
-date order, which is the shape the indicator engine expects.
+date order, with optional timeframe resampling (1H, 4H, 1D, 3D, 1W, 1M, 1Y).
 """
 
 from __future__ import annotations
@@ -12,6 +12,10 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
+import pandas as pd
+
+from data.resample import resample_bars
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -20,6 +24,9 @@ COLUMNS: tuple[str, ...] = (
     "ticker",
     "date",
     "prev_close",
+    "open",
+    "high",
+    "low",
     "close",
     "total_trade",
     "total_value",
@@ -76,7 +83,37 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 def upsert_rows(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     """Insert or update rows. Returns the number of rows written."""
-    payload = [{c: row[c] for c in COLUMNS} for row in rows]
+    payload = []
+    for row in rows:
+        close = row["close"]
+        prev_close = row.get("prev_close", close)
+        open_val = row.get("open", prev_close)
+        high_val = row.get("high", max(close, open_val, prev_close))
+        low_val = row.get("low", min(close, open_val, prev_close))
+        
+        item = {
+            "ticker": row["ticker"],
+            "date": row["date"],
+            "prev_close": prev_close,
+            "open": open_val,
+            "high": high_val,
+            "low": low_val,
+            "close": close,
+            "total_trade": row.get("total_trade", 0),
+            "total_value": row.get("total_value", 0.0),
+            "total_volume": row.get("total_volume", 0),
+            "buy_count": row.get("buy_count", 0),
+            "sell_count": row.get("sell_count", 0),
+            "buy_volume": row.get("buy_volume", 0),
+            "sell_volume": row.get("sell_volume", 0),
+            "foreign_buy_volume": row.get("foreign_buy_volume", 0),
+            "foreign_sell_volume": row.get("foreign_sell_volume", 0),
+            "foreign_buy_value": row.get("foreign_buy_value", 0.0),
+            "foreign_sell_value": row.get("foreign_sell_value", 0.0),
+            "foreign_room": row.get("foreign_room", 0),
+        }
+        payload.append(item)
+
     if not payload:
         return 0
     conn.executemany(_UPSERT_SQL, payload)
@@ -89,8 +126,9 @@ def get_range(
     ticker: str,
     start: str | None = None,
     end: str | None = None,
+    timeframe: str = "1D",
 ) -> list[dict]:
-    """Rows for `ticker` between the inclusive ISO dates `start` and `end`."""
+    """Rows for `ticker` between the inclusive ISO dates/timestamps `start` and `end`."""
     sql = f"SELECT {', '.join(COLUMNS)} FROM daily_prices WHERE ticker = ?"
     params: list[object] = [ticker.upper()]
     if start:
@@ -100,24 +138,60 @@ def get_range(
         sql += " AND date <= ?"
         params.append(end)
     sql += " ORDER BY date ASC"
-    return [dict(r) for r in conn.execute(sql, params)]
+    raw_rows = [dict(r) for r in conn.execute(sql, params)]
+    if not raw_rows or timeframe == "1H":
+        return raw_rows
+    
+    # Resample to target timeframe
+    df = pd.DataFrame(raw_rows).set_index("date")
+    resampled = resample_bars(df, timeframe)
+    out_rows = resampled.reset_index().to_dict(orient="records")
+    return out_rows
 
 
-def get_recent(conn: sqlite3.Connection, ticker: str, lookback_days: int) -> list[dict]:
+def get_recent(
+    conn: sqlite3.Connection,
+    ticker: str,
+    lookback_days: int,
+    timeframe: str = "1D",
+) -> list[dict]:
     """The most recent `lookback_days` *trading rows* for `ticker`, oldest first.
 
-    Trading rows, not calendar days: a 300-row lookback is what indicator windows
-    actually consume, and it is stable across holidays and halts.
+    If timeframe != '1H', retrieves sufficient underlying rows and resamples to
+    the target timeframe, returning at most `lookback_days` aggregated bars.
     """
     if lookback_days <= 0:
         return []
+
+    # If asking for 1H or daily (and stored rows are daily), simple limit query
+    if timeframe == "1H":
+        sql = (
+            f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
+            "WHERE ticker = ? ORDER BY date DESC LIMIT ?"
+        )
+        rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), lookback_days))]
+        rows.reverse()
+        return rows
+
+    # Multipliers to ensure we pull enough base rows for aggregated timeframes
+    mult_map = {"4H": 4, "1D": 5, "3D": 3, "1W": 5, "1M": 22, "1Y": 252}
+    multiplier = mult_map.get(timeframe.upper(), 5)
+    fetch_limit = min(max(lookback_days * multiplier + 50, 300), 10000)
+
     sql = (
         f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
         "WHERE ticker = ? ORDER BY date DESC LIMIT ?"
     )
-    rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), lookback_days))]
+    rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), fetch_limit))]
     rows.reverse()
-    return rows
+    if not rows:
+        return []
+
+    df = pd.DataFrame(rows).set_index("date")
+    resampled = resample_bars(df, timeframe)
+    if len(resampled) > lookback_days:
+        resampled = resampled.tail(lookback_days)
+    return resampled.reset_index().to_dict(orient="records")
 
 
 def list_tickers(conn: sqlite3.Connection) -> list[str]:
@@ -146,4 +220,4 @@ def date_bounds(conn: sqlite3.Connection, ticker: str) -> tuple[str | None, str 
 
 def rows_to_columns(rows: Sequence[dict]) -> dict[str, list]:
     """Transpose row dicts into column lists. Convenience for callers building frames."""
-    return {c: [row[c] for row in rows] for c in COLUMNS}
+    return {c: [row[c] for row in rows] for c in COLUMNS if rows and c in rows[0]}

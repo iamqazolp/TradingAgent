@@ -24,17 +24,21 @@ IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 def _check_iso(value: str | None) -> str | None:
     if value is None:
         return None
-    date.fromisoformat(value)  # raises ValueError on a nonsense date like 2024-13-45
+    val = value.split(" ")[0].split("T")[0]
+    date.fromisoformat(val)  # raises ValueError on a nonsense date like 2024-13-45
     return value
 
 
 class PriceRow(BaseModel):
-    """One stored trading day, as returned by `get_price_data`."""
+    """One stored trading bar, as returned by `get_price_data`."""
 
     model_config = ConfigDict(extra="ignore")
 
-    date: IsoDate
+    date: str
     prev_close: float = Field(gt=0, description="previous close, VND")
+    open: float | None = Field(default=None, gt=0, description="open price, VND")
+    high: float | None = Field(default=None, gt=0, description="high price, VND")
+    low: float | None = Field(default=None, gt=0, description="low price, VND")
     close: float = Field(gt=0, description="close, VND")
     total_trade: int = Field(ge=0, description="matched trade count")
     total_value: float = Field(ge=0, description="total traded value, VND")

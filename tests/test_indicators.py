@@ -29,11 +29,11 @@ from indicators.foreign_flow import (
     foreign_participation_ratio,
     foreign_room_trend,
 )
-from indicators.momentum import rsi
+from indicators.momentum import rsi, stochastic
 from indicators.trade_flow import avg_trade_size_by_side, buy_sell_count_imbalance
-from indicators.trend import ema, ema_series, macd, sma
+from indicators.trend import adx, ema, ema_series, macd, sma
 from indicators.value_flow import avg_trade_value, value_spike
-from indicators.volatility import bollinger, close_to_close_volatility
+from indicators.volatility import atr, bollinger, close_to_close_volatility
 from indicators.volume_flow import buy_sell_volume_imbalance, obv
 from tests.conftest import build_frame, close_series
 
@@ -430,3 +430,73 @@ def test_room_change_without_matching_foreign_trades_is_flagged_structural():
 def test_foreign_room_trend_needs_window_plus_one_rows():
     frame = build_frame(foreign_room=[1_000, 900])
     assert_insufficient(foreign_room_trend(frame, 5), required=6, available=2)
+
+
+# --------------------------------------------------------------------------- Phase 2: ATR, ADX, Stochastic
+
+
+def test_atr_hand_calculated():
+    # Closes: 100, 105, 102, 108
+    # Highs:  102, 107, 104, 110
+    # Lows:   98,  103, 100, 105
+    # TRs:    TR1=max(4, 7, 3)=7, TR2=max(4, 1, 5)=5, TR3=max(5, 8, 3)=8
+    # n=2 -> initial ATR at idx 2: (7+5)/2 = 6.0
+    # idx 3: (6.0 * 1 + 8.0)/2 = 7.0
+    frame = build_frame(
+        close=[100.0, 105.0, 102.0, 108.0],
+        high=[102.0, 107.0, 104.0, 110.0],
+        low=[98.0, 103.0, 100.0, 105.0],
+        open=[100.0, 104.0, 103.0, 106.0],
+    )
+    result = atr(frame, 2)
+    assert result["latest_atr"] == pytest.approx(7.0)
+    assert result["suggested_stop_distance"] == pytest.approx(14.0)
+    assert result["latest_atr_pct"] == pytest.approx(7.0 / 108.0 * 100.0)
+
+
+def test_atr_requires_window_plus_one():
+    frame = build_frame(close=[100.0, 105.0])
+    assert_insufficient(atr(frame, 5), required=6)
+
+
+def test_adx_hand_calculated():
+    frame = build_frame(
+        close=[10.0, 12.0, 14.0, 13.0, 16.0, 18.0],
+        high=[11.0, 13.0, 15.0, 14.0, 17.0, 19.0],
+        low=[9.0, 11.0, 13.0, 12.0, 15.0, 17.0],
+    )
+    result = adx(frame, 2)
+    assert "adx" in result["latest"]
+    assert result["latest"]["adx"] > 0
+    assert result["directional_bias"] == "bullish"
+    assert result["trend_strength"] in ("trending", "very_strong_trend", "emerging_trend")
+
+
+def test_adx_requires_double_window():
+    frame = build_frame(close=[10.0, 12.0, 13.0])
+    assert_insufficient(adx(frame, 2), required=4)
+
+
+def test_stochastic_hand_calculated():
+    # k=3, d=2, slowing=1
+    frame = build_frame(
+        high=[10.0, 12.0, 14.0, 16.0, 15.0],
+        low=[8.0, 9.0, 10.0, 12.0, 11.0],
+        close=[9.0, 11.0, 13.0, 15.0, 12.0],
+    )
+    result = stochastic(frame, k_window=3, d_window=2, slowing=1)
+    assert result["latest"]["k"] == pytest.approx(33.333333333333336)
+    assert result["latest"]["d"] == pytest.approx(59.523809523809526)
+    assert result["zone"] == "neutral"
+
+
+def test_stochastic_crossover_and_zones():
+    # Bullish cross into overbought
+    frame = build_frame(
+        high=[10.0, 12.0, 14.0, 16.0, 20.0],
+        low=[8.0, 9.0, 10.0, 11.0, 18.0],
+        close=[9.0, 10.0, 11.0, 15.0, 20.0],
+    )
+    result = stochastic(frame, k_window=3, d_window=2, slowing=1)
+    assert result["zone"] == "overbought"
+

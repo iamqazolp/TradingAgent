@@ -1,10 +1,8 @@
-"""Group A: trend. SMA, EMA, MACD on close.
+"""Group A: trend. SMA, EMA, MACD, and ADX/DMI.
 
 EMA seeding follows the TA-Lib convention: the first EMA value is the simple
-average of the first `n` closes, and the recursion runs from there. This is
-stated explicitly because pandas' ``ewm(adjust=False)`` seeds on the *first
-observation* instead, which produces different early values and would not match
-the independent ground-truth implementation in ``scripts/ground_truth.py``.
+average of the first `n` closes, and the recursion runs from there.
+ADX (Average Directional Index) is computed via Wilder smoothing on +DM, -DM, and TR.
 """
 
 from __future__ import annotations
@@ -63,9 +61,6 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> d
         return marker
 
     macd_line = ema_series(close, fast) - ema_series(close, slow)
-    # The signal line is an EMA of the MACD line, which only exists from index
-    # slow-1 onward. Seed it on that live section so the recursion is not
-    # contaminated by leading NaNs.
     live = macd_line.dropna()
     signal_live = ema_series(live, signal)
     signal_line = signal_live.reindex(macd_line.index)
@@ -96,6 +91,123 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> d
     }
 
 
+def adx(data: pd.DataFrame | pd.Series, n: int = 14) -> dict:
+    """Wilder's Average Directional Movement Index (ADX) over `n` periods.
+
+    Measures trend strength independently of direction.
+    Requires at least 2*n rows for double Wilder smoothing.
+    """
+    required = 2 * n
+    if isinstance(data, pd.Series):
+        return insufficient("adx requires high, low, and close columns (DataFrame)", required)
+
+    marker = require(data.index.to_series(), required, f"adx({n})")
+    if marker:
+        return marker
+
+    high = pd.to_numeric(data["high"], errors="coerce").astype("float64").to_numpy()
+    low = pd.to_numeric(data["low"], errors="coerce").astype("float64").to_numpy()
+    close = pd.to_numeric(data["close"], errors="coerce").astype("float64").to_numpy()
+    count = len(close)
+
+    plus_dm = np.zeros(count, dtype="float64")
+    minus_dm = np.zeros(count, dtype="float64")
+    tr = np.zeros(count, dtype="float64")
+
+    for i in range(1, count):
+        up_move = high[i] - high[i - 1]
+        down_move = low[i - 1] - low[i]
+        if up_move > down_move and up_move > 0:
+            plus_dm[i] = up_move
+        if down_move > up_move and down_move > 0:
+            minus_dm[i] = down_move
+        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
+
+    # Wilder smoothing on TR, +DM, -DM
+    smooth_tr = np.full(count, np.nan, dtype="float64")
+    smooth_plus_dm = np.full(count, np.nan, dtype="float64")
+    smooth_minus_dm = np.full(count, np.nan, dtype="float64")
+    plus_di = np.full(count, np.nan, dtype="float64")
+    minus_di = np.full(count, np.nan, dtype="float64")
+    dx = np.full(count, np.nan, dtype="float64")
+
+    smooth_tr[n] = float(np.mean(tr[1 : n + 1]))
+    smooth_plus_dm[n] = float(np.mean(plus_dm[1 : n + 1]))
+    smooth_minus_dm[n] = float(np.mean(minus_dm[1 : n + 1]))
+
+    for i in range(n, count):
+        if i > n:
+            smooth_tr[i] = (smooth_tr[i - 1] * (n - 1) + tr[i]) / n
+            smooth_plus_dm[i] = (smooth_plus_dm[i - 1] * (n - 1) + plus_dm[i]) / n
+            smooth_minus_dm[i] = (smooth_minus_dm[i - 1] * (n - 1) + minus_dm[i]) / n
+
+        str_val = smooth_tr[i]
+        if str_val > 0:
+            p_di = 100.0 * (smooth_plus_dm[i] / str_val)
+            m_di = 100.0 * (smooth_minus_dm[i] / str_val)
+            plus_di[i] = p_di
+            minus_di[i] = m_di
+            di_sum = p_di + m_di
+            dx[i] = 100.0 * (abs(p_di - m_di) / di_sum) if di_sum > 0 else 0.0
+
+    # Wilder smoothing on DX -> ADX
+    adx_arr = np.full(count, np.nan, dtype="float64")
+    start_adx = 2 * n - 1
+    if start_adx < count:
+        adx_arr[start_adx] = float(np.mean(dx[n : start_adx + 1]))
+        prev_adx = adx_arr[start_adx]
+        for i in range(start_adx + 1, count):
+            prev_adx = (prev_adx * (n - 1) + dx[i]) / n
+            adx_arr[i] = prev_adx
+
+    adx_series = pd.Series(adx_arr, index=data.index, name=f"adx{n}")
+    plus_di_series = pd.Series(plus_di, index=data.index, name=f"plus_di{n}")
+    minus_di_series = pd.Series(minus_di, index=data.index, name=f"minus_di{n}")
+
+    adx_val = latest(adx_series)
+    plus_val = latest(plus_di_series)
+    minus_val = latest(minus_di_series)
+
+    if adx_val is None:
+        return insufficient(f"adx({n}) has no value on the latest row", required, count)
+
+    return {
+        "window": n,
+        "latest": {
+            "adx": adx_val,
+            "plus_di": plus_val,
+            "minus_di": minus_val,
+        },
+        "trend_strength": _adx_strength(adx_val),
+        "directional_bias": _adx_bias(plus_val, minus_val),
+        "adx_series": adx_series,
+        "plus_di_series": plus_di_series,
+        "minus_di_series": minus_di_series,
+    }
+
+
+def _adx_strength(val: float | None) -> str:
+    if val is None:
+        return "unknown"
+    if val >= 50:
+        return "very_strong_trend"
+    if val >= 25:
+        return "trending"
+    if val >= 20:
+        return "emerging_trend"
+    return "weak_or_ranging"
+
+
+def _adx_bias(plus: float | None, minus: float | None) -> str:
+    if plus is None or minus is None:
+        return "unknown"
+    if plus > minus + 1.0:
+        return "bullish"
+    if minus > plus + 1.0:
+        return "bearish"
+    return "neutral"
+
+
 def _crossover(previous: float | None, current: float | None) -> str:
     """Describe the histogram sign change between the last two rows."""
     if previous is None or current is None:
@@ -107,9 +219,10 @@ def _crossover(previous: float | None, current: float | None) -> str:
     return "none"
 
 
-def trend_group(close: pd.Series, params: dict | None = None) -> dict:
+def trend_group(data: pd.DataFrame | pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
+    close = data["close"] if isinstance(data, pd.DataFrame) else data
     sma_windows = params.get("sma_windows", (20, 50, 200))
     ema_windows = params.get("ema_windows", (12, 26))
     out: dict[str, dict] = {}
@@ -123,4 +236,7 @@ def trend_group(close: pd.Series, params: dict | None = None) -> dict:
         params.get("macd_slow", 26),
         params.get("macd_signal", 9),
     )
+    if isinstance(data, pd.DataFrame) and "high" in data.columns and "low" in data.columns:
+        adx_n = params.get("adx_window", 14)
+        out[f"adx_{adx_n}"] = adx(data, adx_n)
     return out
