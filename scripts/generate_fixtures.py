@@ -127,11 +127,25 @@ def generate_ticker(symbol: str, days: list[date]) -> list[dict]:
             room += ROOM_STRUCTURAL_EVENT[1]  # ownership-limit change, not trading
         room = max(0, room)
 
+        # Open price fluctuates around prev_close
+        open_shock = rng.gauss(0.0, daily_vol * 0.4)
+        open_price = max(1_000.0, round(prev_close * (1.0 + open_shock), -1))
+
+        # High and Low intraday excursions
+        high_excursion = abs(rng.gauss(0.0, daily_vol * 0.8))
+        low_excursion = abs(rng.gauss(0.0, daily_vol * 0.8))
+        high_price = max(price, open_price, round(max(price, open_price) * (1.0 + high_excursion), -1))
+        low_price = min(price, open_price, round(min(price, open_price) * (1.0 - low_excursion), -1))
+        low_price = max(1_000.0, low_price)
+
         records.append(
             {
                 "Symbol": symbol,
                 "Date": day.strftime("%d/%m/%Y"),
                 "PricePreviousClose": f"{prev_close:.0f}",
+                "PriceOpen": f"{open_price:.0f}",
+                "PriceHigh": f"{high_price:.0f}",
+                "PriceLow": f"{low_price:.0f}",
                 "PriceClose": f"{price:.0f}",
                 "TotalTrade": str(total_trade),
                 "TotalValue": _vnd(total_value, separators=True),
