@@ -159,11 +159,22 @@ def get_recent(
 
     If timeframe != '1H', retrieves sufficient underlying rows and resamples to
     the target timeframe, returning at most `lookback_days` aggregated bars.
+    Adapts dynamically to both daily and intraday (hourly) stored data density.
     """
     if lookback_days <= 0:
         return []
 
-    # If asking for 1H or daily (and stored rows are daily), simple limit query
+    # Check density of stored data for this ticker (daily vs intraday hourly)
+    sample_row = conn.execute(
+        "SELECT date FROM daily_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        (ticker.upper(),),
+    ).fetchone()
+    if not sample_row:
+        return []
+
+    is_intraday = ":" in str(sample_row[0]) or len(str(sample_row[0])) > 10
+
+    # If asking for 1H base bars directly
     if timeframe == "1H":
         sql = (
             f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
@@ -174,9 +185,14 @@ def get_recent(
         return rows
 
     # Multipliers to ensure we pull enough base rows for aggregated timeframes
-    mult_map = {"4H": 4, "1D": 5, "3D": 3, "1W": 5, "1M": 22, "1Y": 252}
-    multiplier = mult_map.get(timeframe.upper(), 5)
-    fetch_limit = min(max(lookback_days * multiplier + 50, 300), 10000)
+    # In Vietnam market, there are ~5 hourly trading bars per day.
+    intraday_factor = 5 if is_intraday else 1
+    base_mult_map = {"4H": 4, "1D": 1, "3D": 3, "1W": 5, "1M": 22, "1Y": 252}
+    base_mult = base_mult_map.get(timeframe.upper(), 1)
+    effective_mult = base_mult * intraday_factor if timeframe.upper() not in ("4H",) else (4 if is_intraday else 1)
+
+    total_rows = row_count(conn, ticker)
+    fetch_limit = min(max(lookback_days * effective_mult + 50 * intraday_factor, 300), total_rows)
 
     sql = (
         f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
@@ -189,6 +205,15 @@ def get_recent(
 
     df = pd.DataFrame(rows).set_index("date")
     resampled = resample_bars(df, timeframe)
+
+    # Dynamic expansion if more rows are available and resampled bar count fell short
+    while len(resampled) < lookback_days and fetch_limit < total_rows:
+        fetch_limit = min(fetch_limit * 3, total_rows)
+        rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), fetch_limit))]
+        rows.reverse()
+        df = pd.DataFrame(rows).set_index("date")
+        resampled = resample_bars(df, timeframe)
+
     if len(resampled) > lookback_days:
         resampled = resampled.tail(lookback_days)
     return resampled.reset_index().to_dict(orient="records")

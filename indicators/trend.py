@@ -145,10 +145,13 @@ def adx(data: pd.DataFrame | pd.Series, n: int = 14) -> dict:
         if str_val > 0:
             p_di = 100.0 * (smooth_plus_dm[i] / str_val)
             m_di = 100.0 * (smooth_minus_dm[i] / str_val)
-            plus_di[i] = p_di
-            minus_di[i] = m_di
-            di_sum = p_di + m_di
-            dx[i] = 100.0 * (abs(p_di - m_di) / di_sum) if di_sum > 0 else 0.0
+        else:
+            p_di = 0.0
+            m_di = 0.0
+        plus_di[i] = p_di
+        minus_di[i] = m_di
+        di_sum = p_di + m_di
+        dx[i] = 100.0 * (abs(p_di - m_di) / di_sum) if di_sum > 0 else 0.0
 
     # Wilder smoothing on DX -> ADX
     adx_arr = np.full(count, np.nan, dtype="float64")
@@ -325,6 +328,7 @@ def ichimoku(
         "senkou_a_series": senkou_a.rename("senkou_span_a"),
         "senkou_b_series": senkou_b.rename("senkou_span_b"),
         "chikou_series": close.rename("chikou_span"),
+        "chikou_shifted_series": close.shift(-displacement).rename("chikou_span_shifted"),
     }
 
 

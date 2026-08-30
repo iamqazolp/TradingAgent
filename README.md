@@ -63,7 +63,7 @@ error message for each way it can fail. See `docs/going_live.md`.
 uv sync                                              # create .venv from pyproject.toml
 uv run python scripts/generate_fixtures.py           # write tests/fixtures/*.json
 uv run python -m data.ingest --file tests/fixtures/sample_daily_data.json
-uv run pytest                                        # 125 tests
+uv run pytest                                        # 146 tests
 uv run python scripts/ground_truth.py                # independent reference values
 uv run python scripts/validate.py                    # engine vs ground truth
 uv run python scripts/mcp_smoke.py                   # real stdio MCP session
@@ -131,12 +131,12 @@ and that the value quoted back also appears in `logs/tool_calls.jsonl`.
 
 | Tool | Use it for |
 |---|---|
-| `get_price_data(ticker, lookback_days=300, start, end)` | raw stored rows, oldest first. `lookback_days` counts trading rows, not calendar days |
-| `compute_indicators(ticker \| rows, groups, params, series_tail)` | the seven indicator groups |
-| `get_flow_summary(ticker \| rows, window=5)` | the cheap flow-only answer |
+| `get_price_data(ticker, lookback_days=300, start=None, end=None, timeframe="1D")` | raw stored / resampled OHLC rows, oldest first. `lookback_days` counts trading rows, not calendar days |
+| `compute_indicators(ticker \| rows, groups=None, params=None, series_tail=10, lookback_days=300, timeframe="1D")` | the seven indicator groups |
+| `get_flow_summary(ticker \| rows, window=5, lookback_days=300, timeframe="1D")` | the flow-only answer |
 
 Groups: `trend`, `momentum`, `volatility`, `volume_flow`, `trade_flow`,
-`value_flow`, `foreign_flow`.
+`value_flow`, `foreign_flow`. Supported timeframes: `1H`, `4H`, `1D`, `3D`, `1W`, `1M`, `1Y`.
 
 Every indicator function is pure — pandas in, dict out, no I/O — and when history
 is too short it returns
@@ -159,9 +159,12 @@ changing one here fails validation there.
 |---|---|
 | EMA | SMA-seeded (TA-Lib style): the first value is the mean of the first `n` closes. Deliberately **not** pandas `ewm(adjust=False)`, which seeds on the first observation |
 | MACD | signal EMA computed on the live (dropna) MACD section, so leading NaNs cannot contaminate the recursion; requires `slow + signal - 1` rows |
+| ADX / DMI | Wilder smoothing on +DM, -DM, and TR. Defaults p_di/m_di/dx to 0.0 when smoothed TR is 0 (prevents NaN cascades) |
 | RSI | Wilder smoothing. `avg_loss == 0` reads 100 when there were gains, 50 when the window is flat |
+| Stochastic | Classic (14, 3, 3) %K and %D over highest high and lowest low |
+| ATR | True Wilder 14-period Average True Range for stop sizing |
 | Bollinger | population stdev (`ddof=0`), the classic definition |
-| Realized volatility | sample stdev (`ddof=1`) of log returns, annualized on 252 days, labelled an ATR substitute |
+| Realized volatility | sample stdev (`ddof=1`) of log returns, annualized on 252 days |
 | "vs baseline" ratios | today divided by the mean of the previous `n` days, **excluding today** — including it would damp the very spike being detected |
 | OBV | signed by the provider's `prev_close`, cross-checked against the prior row's close at 0.5% tolerance; disagreement refuses instead of guessing |
 
@@ -169,7 +172,7 @@ changing one here fails validation there.
 
 Documented so no future contributor assumes otherwise:
 
-- **No open, high, low, fundamentals, news, or index data.** See the table above.
+- **No sub-hour tick data, sub-minute tick VWAP, fundamentals, news sentiment, or index breadth.**
 - **The bundled data is synthetic.** See "Data provenance".
 - **Corporate actions may be unadjusted.** A `prev_close` that disagrees with the
   prior row's close is the fingerprint of an unadjusted split or stock dividend.
@@ -208,16 +211,16 @@ non-writable log never costs the user their answer.
 `scripts/ground_truth.py` reimplements every Tier 0 indicator in pure stdlib
 (`math`, `statistics`, its own parser, no pandas and no project imports) and
 writes `tests/fixtures/ground_truth.json`. `scripts/validate.py` compares the
-engine against it — 35 checks per ticker across VNM, HPG and TNG.
+engine against it — 46 checks per ticker across VNM, HPG and TNG.
 
-Current result: **105/105 checks pass**, largest disagreement ~2.6e-14 (floating
+Current result: **138/138 checks pass**, largest disagreement ~2.6e-14 (floating
 point noise) against a 0.5% tolerance, with no sign or order-of-magnitude
 failures. Report: `logs/validation_report.json`.
 
 ## Layout
 
 ```
-data/            schema.sql, store.py (SQLite upsert store), ingest.py (casts, rejects, warnings)
+data/            schema.sql, store.py (SQLite upsert store), ingest.py (casts, rejects, warnings), resample.py (multi-timeframe)
 indicators/      pure functions: trend, momentum, volatility, volume_flow,
                  trade_flow, value_flow, foreign_flow + engine.py (dispatch, quality, serialize)
 mcp_server/      server.py (three tools, audit log), tool_schemas.py (pydantic validation)
@@ -225,8 +228,8 @@ skills/          technical-analysis/SKILL.md — the reasoning framework
 scripts/         generate_fixtures, ground_truth, validate, mcp_smoke, install_skill,
                  mock_feed + mock_model (test doubles for the two plug-in points),
                  loop_smoke (oh end to end against the scripted model)
-tests/           125 tests: hand-calculated indicators, engine, store/ingest, MCP layer,
-                 live feed over HTTP
+tests/           146 tests: hand-calculated indicators, engine, store/ingest, MCP layer,
+                 resampling, live feed over HTTP
 docs/            going_live.md — the two plug-in points, what is proved and what is not
                  acceptance_prompts.md — the 10 interactive prompts for Phase 4
 ```
@@ -236,9 +239,9 @@ docs/            going_live.md — the two plug-in points, what is proved and wh
 | Phase | State |
 |---|---|
 | 0 Environment | done. `oh -p` runs a full turn end to end against the scripted model in `scripts/loop_smoke.py`; only the real provider key is missing (`oh setup`) |
-| 1 Data layer | done: 3 tickers × 520 days ingested, range queries and idempotent re-ingest tested, live HTTP fetch tested against `scripts/mock_feed.py` |
-| 2 Indicator engine | done: Groups A–G pure, hand-calculated unit tests, insufficient-data contract enforced |
-| 3 MCP server | done: three tools, pydantic-validated, verified over a real stdio session |
+| 1 Data layer | done: OHLC schema, 3 tickers × 520 days ingested, multi-timeframe resampler (1H, 4H, 1D, 3D, 1W, 1M, 1Y) tested |
+| 2 Indicator engine | done: Groups A–G pure, ATR/ADX/Stochastic/Ichimoku, hand-calculated unit tests, insufficient-data contract enforced |
+| 3 MCP server | done: three tools, multi-timeframe pydantic-validated, verified over a real stdio session |
 | 4 OpenHarness integration | done mechanically: the skill reaches the system prompt, all three tools reach the model, one is dispatched, executed and audited (`loop_smoke.py`). The 10-prompt judgement check needs credentials — see `docs/acceptance_prompts.md` |
-| 5 Ground-truth validation | done: 105/105, max deviation 2.6e-14 |
-| 6 Hardening | done: gaps/halts/short history, corporate-action flagging, per-call audit log |
+| 5 Ground-truth validation | done: 138/138, max deviation 2.6e-14 |
+| 6 Hardening | done: gaps/halts/short history/flat periods, corporate-action flagging, per-call audit log |

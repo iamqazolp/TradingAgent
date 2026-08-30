@@ -127,8 +127,8 @@ def resample_bars(df: pd.DataFrame, timeframe: str = "1D") -> pd.DataFrame:
     daily = _resample_by_date(work) if is_intraday else work
 
     if tf == "3D":
-        # Group every 3 trading days
-        resampled = _group_trading_days(daily, days=3)
+        # Fixed 3-day period grouping (anchored to calendar epoch for query boundary stability)
+        resampled = _resample_period_grouper(daily, freq="3D")
         return _finalize_frame(resampled, is_intraday=False)
 
     if tf == "1W":

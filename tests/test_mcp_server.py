@@ -338,3 +338,14 @@ def test_get_flow_summary_with_timeframe():
     assert payload["timeframe"] == "1W"
     assert "buy_sell_volume_imbalance_avg" in payload
 
+
+def test_invalid_timeframe_is_rejected_by_mcp_tools():
+    for tool_name, args in (
+        ("get_price_data", {"ticker": TICKER, "timeframe": "15m"}),
+        ("compute_indicators", {"ticker": TICKER, "timeframe": "invalid_tf"}),
+        ("get_flow_summary", {"ticker": TICKER, "timeframe": "2W"}),
+    ):
+        with pytest.raises(ToolError, match="unsupported timeframe"):
+            asyncio.run(server.call_tool(tool_name, args))
+
+

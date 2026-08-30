@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -475,6 +476,20 @@ def test_adx_hand_calculated():
 def test_adx_requires_double_window():
     frame = build_frame(close=[10.0, 12.0, 13.0])
     assert_insufficient(adx(frame, 2), required=4)
+
+
+def test_adx_flat_halted_period_no_nan_cascade():
+    # 10 bars with flat trading (high=low=close=10.0) followed by trending bars
+    frame = build_frame(
+        close=[10.0] * 5 + [11.0, 12.0, 13.0, 14.0, 15.0],
+        high=[10.0] * 5 + [11.5, 12.5, 13.5, 14.5, 15.5],
+        low=[10.0] * 5 + [10.5, 11.5, 12.5, 13.5, 14.5],
+    )
+    result = adx(frame, 3)
+    assert result["latest"]["adx"] is not None
+    assert not np.isnan(result["latest"]["adx"])
+    assert result["latest"]["plus_di"] is not None
+    assert result["latest"]["minus_di"] is not None
 
 
 def test_stochastic_hand_calculated():

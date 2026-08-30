@@ -58,8 +58,13 @@ def test_daily_to_weekly_resampling():
 
 
 def test_daily_to_3d_resampling():
-    # 6 daily rows -> 2 3-day bars
+    # 6 consecutive daily rows -> exactly 2 3-day bars
+    dates = [
+        "2026-01-01", "2026-01-02", "2026-01-03",
+        "2026-01-04", "2026-01-05", "2026-01-06",
+    ]
     frame = build_frame(
+        dates=dates,
         close=[10, 12, 11, 13, 15, 14],
         high=[11, 13, 12, 14, 16, 15],
         low=[9, 10, 10, 12, 13, 13],
@@ -75,6 +80,32 @@ def test_daily_to_3d_resampling():
     assert res.iloc[0]["total_volume"] == 300
     assert res.iloc[1]["close"] == pytest.approx(14.0)
     assert res.iloc[1]["total_volume"] == 600
+
+
+def test_3d_resampling_boundary_stability():
+    # Adding older or newer rows doesn't shift existing 3D bucket boundaries
+    dates = [
+        "2026-01-01", "2026-01-02", "2026-01-03",
+        "2026-01-04", "2026-01-05", "2026-01-06",
+    ]
+    frame_full = build_frame(
+        dates=dates,
+        close=[10, 12, 11, 13, 15, 14],
+        high=[11, 13, 12, 14, 16, 15],
+        low=[9, 10, 10, 12, 13, 13],
+    )
+    frame_partial = build_frame(
+        dates=dates[:3],
+        close=[10, 12, 11],
+        high=[11, 13, 12],
+        low=[9, 10, 10],
+    )
+    res_full = resample_bars(frame_full, "3D")
+    res_partial = resample_bars(frame_partial, "3D")
+    assert res_full.index[0] == res_partial.index[0]
+    assert res_full.iloc[0]["close"] == res_partial.iloc[0]["close"]
+    assert res_full.iloc[0]["high"] == res_partial.iloc[0]["high"]
+    assert res_full.iloc[0]["low"] == res_partial.iloc[0]["low"]
 
 
 def test_daily_to_monthly_and_yearly():
