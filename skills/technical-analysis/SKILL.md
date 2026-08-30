@@ -39,9 +39,9 @@ There is **no sub-hour minute/tick data, no fundamentals, and no news**.
 
 - `get_price_data(ticker, lookback_days=300, start=None, end=None, timeframe="1D")` — raw stored
   bars, oldest first. `lookback_days` counts trading bars in the requested timeframe.
-- `compute_indicators(ticker=..., groups=[...], timeframe="1D", series_tail=10)` — the indicator
+- `compute_indicators(ticker=..., groups=[...], lookback_days=300, timeframe="1D", series_tail=10)` — the indicator
   groups. Pass `ticker` and let the server load rows.
-- `get_flow_summary(ticker=..., window=5, timeframe="1D")` — the cheap flow-only answer.
+- `get_flow_summary(ticker=..., window=5, lookback_days=300, timeframe="1D")` — the cheap flow-only answer.
 
 Supported timeframes: `1H` (hourly), `4H` (4-hour), `1D` (daily), `3D` (3-day), `1W` (weekly), `1M` (monthly), `1Y` (yearly).
 

@@ -31,6 +31,14 @@ def _check_iso(value: str | None) -> str | None:
     return value
 
 
+def _norm_timeframe(value: Any) -> str:
+    """Normalize user-supplied timeframe string using the resampler's aliases."""
+    if isinstance(value, str):
+        from data.resample import normalize_timeframe
+        return normalize_timeframe(value)
+    return "1D"
+
+
 class PriceRow(BaseModel):
     """One stored trading bar, as returned by `get_price_data`."""
 
@@ -41,18 +49,18 @@ class PriceRow(BaseModel):
     open: float | None = Field(default=None, gt=0, description="open price, VND")
     high: float | None = Field(default=None, gt=0, description="high price, VND")
     low: float | None = Field(default=None, gt=0, description="low price, VND")
-    close: float = Field(gt=0, description="close, VND")
+    close: float = Field(gt=0, description="close price, VND")
     total_trade: int = Field(ge=0, description="matched trade count")
-    total_value: float = Field(ge=0, description="total traded value, VND")
-    total_volume: int = Field(ge=0, description="total traded volume, shares")
-    buy_count: int = Field(ge=0)
-    sell_count: int = Field(ge=0)
-    buy_volume: int = Field(ge=0)
-    sell_volume: int = Field(ge=0)
-    foreign_buy_volume: int = Field(ge=0)
-    foreign_sell_volume: int = Field(ge=0)
-    foreign_buy_value: float = Field(ge=0)
-    foreign_sell_value: float = Field(ge=0)
+    total_value: float = Field(ge=0, description="matched traded value, VND")
+    total_volume: int = Field(ge=0, description="matched traded volume, shares")
+    buy_count: int = Field(ge=0, description="buy-side trade count")
+    sell_count: int = Field(ge=0, description="sell-side trade count")
+    buy_volume: int = Field(ge=0, description="buy-side volume, shares")
+    sell_volume: int = Field(ge=0, description="sell-side volume, shares")
+    foreign_buy_volume: int = Field(ge=0, description="foreign buy volume, shares")
+    foreign_sell_volume: int = Field(ge=0, description="foreign sell volume, shares")
+    foreign_buy_value: float = Field(ge=0, description="foreign buy value, VND")
+    foreign_sell_value: float = Field(ge=0, description="foreign sell value, VND")
     foreign_room: int = Field(ge=0, description="remaining foreign room, shares")
     ticker: str | None = None
 
@@ -63,10 +71,9 @@ class PriceRow(BaseModel):
 
 
 class RowSource(BaseModel):
-    """Either explicit rows, or a ticker for the server to load them itself.
+    """Common shape for tools that can either take raw rows or load by ticker.
 
-    The plan's contract passes `rows` in from a prior `get_price_data` call. That
-    round trip costs a lot of context for 300 rows, so `ticker` is accepted as an
+    The model can pass rows it already has from `get_price_data`, or use the
     equivalent alternative that loads the same rows server-side.
     """
 
@@ -79,11 +86,8 @@ class RowSource(BaseModel):
 
     @field_validator("timeframe", mode="before")
     @classmethod
-    def _norm_tf(cls, value: str) -> str:
-        if isinstance(value, str):
-            from data.resample import normalize_timeframe
-            return normalize_timeframe(value)
-        return "1D"
+    def _norm_tf(cls, value: Any) -> str:
+        return _norm_timeframe(value)
 
     @model_validator(mode="after")
     def _one_source(self):
@@ -114,11 +118,8 @@ class GetPriceDataInput(BaseModel):
 
     @field_validator("timeframe", mode="before")
     @classmethod
-    def _norm_tf(cls, value: str) -> str:
-        if isinstance(value, str):
-            from data.resample import normalize_timeframe
-            return normalize_timeframe(value)
-        return "1D"
+    def _norm_tf(cls, value: Any) -> str:
+        return _norm_timeframe(value)
 
     @field_validator("ticker")
     @classmethod

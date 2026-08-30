@@ -1,8 +1,8 @@
--- Daily and hourly trading statistics, one row per ticker per timestamp/date.
+-- Trading statistics (hourly and daily bars), one row per ticker per timestamp/date.
 -- Mirrors the VietinBank GetTradingStatistics response; see data/ingest.py for the
 -- raw-field mapping. Derived quantities (net buy volume, average trade size,
 -- foreign net flow, ...) are computed on read in the indicator engine, not stored.
-CREATE TABLE IF NOT EXISTS daily_prices (
+CREATE TABLE IF NOT EXISTS prices (
     ticker TEXT NOT NULL,
     date TEXT NOT NULL,
     prev_close REAL NOT NULL,

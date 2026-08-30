@@ -1,6 +1,6 @@
 """SQLite store for trading statistics (hourly and daily).
 
-Single table, `daily_prices`, keyed on (ticker, date). Writes are upserts so
+Single table, `prices`, keyed on (ticker, date). Writes are upserts so
 re-ingesting the same day is idempotent. Reads return plain dicts in ascending
 date order, with optional timeframe resampling (1H, 4H, 1D, 3D, 1W, 1M, 1Y).
 """
@@ -43,7 +43,7 @@ COLUMNS: tuple[str, ...] = (
 )
 
 _UPSERT_SQL = """
-INSERT INTO daily_prices ({cols})
+INSERT INTO prices ({cols})
 VALUES ({placeholders})
 ON CONFLICT(ticker, date) DO UPDATE SET {updates}
 """.format(
@@ -129,7 +129,7 @@ def get_range(
     timeframe: str = "1D",
 ) -> list[dict]:
     """Rows for `ticker` between the inclusive ISO dates/timestamps `start` and `end`."""
-    sql = f"SELECT {', '.join(COLUMNS)} FROM daily_prices WHERE ticker = ?"
+    sql = f"SELECT {', '.join(COLUMNS)} FROM prices WHERE ticker = ?"
     params: list[object] = [ticker.upper()]
     if start:
         sql += " AND date >= ?"
@@ -166,7 +166,7 @@ def get_recent(
 
     # Check density of stored data for this ticker (daily vs intraday hourly)
     sample_row = conn.execute(
-        "SELECT date FROM daily_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
+        "SELECT date FROM prices WHERE ticker = ? ORDER BY date DESC LIMIT 1",
         (ticker.upper(),),
     ).fetchone()
     if not sample_row:
@@ -177,7 +177,7 @@ def get_recent(
     # If asking for 1H base bars directly
     if timeframe == "1H":
         sql = (
-            f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
+            f"SELECT {', '.join(COLUMNS)} FROM prices "
             "WHERE ticker = ? ORDER BY date DESC LIMIT ?"
         )
         rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), lookback_days))]
@@ -195,7 +195,7 @@ def get_recent(
     fetch_limit = min(max(lookback_days * effective_mult + 50 * intraday_factor, 300), total_rows)
 
     sql = (
-        f"SELECT {', '.join(COLUMNS)} FROM daily_prices "
+        f"SELECT {', '.join(COLUMNS)} FROM prices "
         "WHERE ticker = ? ORDER BY date DESC LIMIT ?"
     )
     rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), fetch_limit))]
@@ -221,16 +221,16 @@ def get_recent(
 
 def list_tickers(conn: sqlite3.Connection) -> list[str]:
     """Every ticker in the store, alphabetically."""
-    return [r[0] for r in conn.execute("SELECT DISTINCT ticker FROM daily_prices ORDER BY ticker")]
+    return [r[0] for r in conn.execute("SELECT DISTINCT ticker FROM prices ORDER BY ticker")]
 
 
 def row_count(conn: sqlite3.Connection, ticker: str | None = None) -> int:
     """Stored row count, overall or for one ticker."""
     if ticker is None:
-        return int(conn.execute("SELECT COUNT(*) FROM daily_prices").fetchone()[0])
+        return int(conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0])
     return int(
         conn.execute(
-            "SELECT COUNT(*) FROM daily_prices WHERE ticker = ?", (ticker.upper(),)
+            "SELECT COUNT(*) FROM prices WHERE ticker = ?", (ticker.upper(),)
         ).fetchone()[0]
     )
 
@@ -238,7 +238,7 @@ def row_count(conn: sqlite3.Connection, ticker: str | None = None) -> int:
 def date_bounds(conn: sqlite3.Connection, ticker: str) -> tuple[str | None, str | None]:
     """First and last stored date for `ticker`, or (None, None) if it is unknown."""
     row = conn.execute(
-        "SELECT MIN(date), MAX(date) FROM daily_prices WHERE ticker = ?", (ticker.upper(),)
+        "SELECT MIN(date), MAX(date) FROM prices WHERE ticker = ?", (ticker.upper(),)
     ).fetchone()
     return (row[0], row[1]) if row else (None, None)
 
