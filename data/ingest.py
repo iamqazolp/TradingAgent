@@ -35,7 +35,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from data import store
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

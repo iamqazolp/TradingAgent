@@ -39,13 +39,14 @@ fields where a small cap has no foreign trading. It covers **VNM, HPG and TNG,
 
 Treat every number in this repo as a correctness fixture, not a market fact.
 
-Switching to the live feed needs no code change, only environment variables:
+Switching to the live feed needs no code change, only environment variables in a `.env` file:
 
 ```bash
-export TA_AGENT_API_URL='https://.../GetTradingStatistics'
-export TA_AGENT_API_TOKEN='...'                       # optional bearer token
-export TA_AGENT_API_PARAMS='{"symbol":"ticker"}'      # if the query params differ
-uv run python -m data.ingest --ticker VNM --start 2024-01-01 --end 2026-01-22
+cp .env.example .env
+# Edit .env with your live API URL, tokens, and LLM keys:
+# TA_AGENT_API_URL=https://.../GetTradingStatistics
+# TA_AGENT_API_TOKEN=secret_token
+# OPENAI_API_KEY=sk-...
 ```
 
 `data.ingest.extract_records` unwraps whatever envelope the response arrives in
@@ -63,7 +64,7 @@ error message for each way it can fail. See `docs/going_live.md`.
 uv sync                                              # create .venv from pyproject.toml
 uv run python scripts/generate_fixtures.py           # write tests/fixtures/*.json
 uv run python -m data.ingest --file tests/fixtures/sample_daily_data.json
-uv run pytest                                        # 146 tests
+uv run pytest                                        # 149 tests
 uv run python scripts/ground_truth.py                # independent reference values
 uv run python scripts/validate.py                    # engine vs ground truth
 uv run python scripts/mcp_smoke.py                   # real stdio MCP session

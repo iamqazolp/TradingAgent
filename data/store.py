@@ -13,8 +13,11 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from data.resample import resample_bars
+
+load_dotenv()
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"

@@ -283,3 +283,15 @@ def test_store_timeframe_queries(conn):
     bars_3d = store.get_range(conn, "VNM", "2026-01-05", "2026-01-14", timeframe="3D")
     assert len(bars_3d) >= 3
 
+
+def test_dotenv_loading(tmp_path, monkeypatch):
+    import os
+    from dotenv import load_dotenv
+    env_file = tmp_path / ".env"
+    env_file.write_text("TA_AGENT_TEST_KEY=secret_123\nTA_AGENT_API_TOKEN=custom_token\n", encoding="utf-8")
+    monkeypatch.delenv("TA_AGENT_TEST_KEY", raising=False)
+    monkeypatch.delenv("TA_AGENT_API_TOKEN", raising=False)
+    load_dotenv(env_file)
+    assert os.environ.get("TA_AGENT_TEST_KEY") == "secret_123"
+    assert os.environ.get("TA_AGENT_API_TOKEN") == "custom_token"
+

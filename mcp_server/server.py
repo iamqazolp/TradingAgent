@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
@@ -37,6 +38,8 @@ from mcp_server.tool_schemas import (
     RowSource,
     rows_as_dicts,
 )
+
+load_dotenv()
 
 logger = logging.getLogger("ta_agent.mcp")
 
