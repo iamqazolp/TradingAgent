@@ -231,25 +231,19 @@ def test_serialize_maps_nan_to_null_and_trims_series():
 
 
 def test_unsupported_metrics_are_refused_with_a_reason():
-    for metric in ("atr", "ADX", "open price", "vwap", "fundamentals"):
+    for metric in ("sub_hour_intraday", "vwap", "market_breadth", "fundamentals", "news_sentiment", "ichimoku"):
         result = unsupported(metric)
         assert result["unsupported"] is True
         assert result["reason"]
-    assert "substitute" in unsupported("atr")["reason"]
+    assert "tick" in unsupported("vwap")["reason"]
     assert is_insufficient(unsupported("moon_phase"))
 
 
-def test_unsupported_list_covers_every_no_row_in_the_feasibility_matrix():
+def test_unsupported_list_covers_every_unsupported_metric():
     for metric in (
-        "open_price",
-        "overnight_gap",
-        "candle_body_ratio",
-        "atr",
-        "adx",
-        "stochastic",
-        "ichimoku",
+        "sub_hour_intraday",
         "vwap",
-        "wick_support_resistance",
+        "ichimoku",
         "market_breadth",
         "fundamentals",
         "news_sentiment",

@@ -65,24 +65,15 @@ GROUPS: tuple[str, ...] = tuple(_FRAME_GROUPS)
 #: What this feed cannot support, and the honest substitute where one exists.
 #: Surfaced to the agent so it declines rather than fabricates.
 UNSUPPORTED_METRICS: dict[str, str] = {
-    "open_price": "not in this feed; only close and previous close are available",
-    "overnight_gap": "needs the open price, which this feed does not provide",
-    "candle_body_ratio": "needs the open price, which this feed does not provide",
-    "atr": (
-        "needs high/low; use close_to_close_volatility as an explicitly labelled "
-        "substitute for stop sizing, or atr when high/low are present"
-    ),
-    "adx": "needs high/low; use adx in trend group when high/low are present",
-    "stochastic": "needs high/low; use stochastic in momentum group when high/low are present",
-    "ichimoku": "needs high/low; use SMA alignment plus MACD for trend structure",
+    "sub_hour_intraday": "feed provides hourly (1H) and higher timeframes; sub-hour minute/tick bars are not supported",
     "vwap": (
-        "true intraday VWAP needs tick data; total_value / total_volume gives a "
-        "daily average traded price, which is not the same thing"
+        "true intraday tick VWAP needs sub-minute tick data; total_value / total_volume gives a "
+        "period average traded price, which is not the same thing"
     ),
-    "wick_support_resistance": "needs high/low; no substitute available from close alone",
-    "market_breadth": "needs multi-ticker index data; out of scope for v1",
-    "fundamentals": "not in this feed",
-    "news_sentiment": "not in this feed",
+    "ichimoku": "not implemented in v1; use SMA alignment plus MACD for trend structure",
+    "market_breadth": "needs multi-ticker index data; out of scope for single-ticker TA",
+    "fundamentals": "not in this market data feed",
+    "news_sentiment": "not in this market data feed",
 }
 
 

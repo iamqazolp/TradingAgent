@@ -2,31 +2,30 @@
 
 A technical-analysis agent for Vietnamese equities, built on
 [OpenHarness](https://github.com/HKUDS/OpenHarness). An MCP server computes
-indicators from a daily close-only feed; a skill file makes the agent reason group
+indicators from an hourly/daily OHLC and order-flow feed; a skill file makes the agent reason group
 by group and refuse what the data cannot support.
 
-Built from `PLAN.md`. Nothing from the plan's deferred roadmap (section 10) is
-implemented, not even as a stub.
+Supports multi-timeframe analysis across **1H, 4H, 1D, 3D, 1W, 1M, 1Y**.
 
-## The one thing to know about the data
+## The data and indicator capabilities
 
-The feed (VietinBank `GetTradingStatistics`) gives **close and previous close
-only**. Per ticker per trading day:
+The feed provides OHLC price action and order-flow dynamics:
 
 | Available | Not available |
 |---|---|
-| previous close, close | **open, high, low** |
-| matched trade count, traded value (VND), traded volume | any intraday or tick data |
-| buy-side / sell-side trade counts and matched volumes | bid/ask, order book |
-| foreign buy/sell volume and value, remaining foreign room | fundamentals, news, index or sector data |
+| OHLC prices: open, high, low, close, previous close | sub-hour minute / tick data |
+| Timeframes: 1H, 4H, 1D, 3D, 1W, 1M, 1Y | real-time sub-minute tick VWAP |
+| Matched trade count, traded value (VND), traded volume | bid/ask order book depth |
+| Buy-side / sell-side trade counts and matched volumes | fundamentals, news sentiment |
+| Foreign buy/sell volume and value, remaining foreign room | multi-ticker index breadth |
 
-So there is no ATR, no ADX, no Stochastic, no Ichimoku, no candlestick pattern, no
-overnight gap, no true VWAP, and no market breadth. The engine refuses each of
-these by name with the honest substitute where one exists
-(`indicators/engine.py::UNSUPPORTED_METRICS`), and the skill tells the agent to
-refuse rather than approximate. Close-to-close realized volatility stands in for
-ATR in stop sizing and is labelled `is_atr_substitute: true` in the payload
-itself, so no layer downstream can present it as ATR by accident.
+Supported indicators include:
+- **Trend**: SMA, EMA, MACD, Wilder ADX / DMI (+DI, -DI, DX, ADX)
+- **Momentum**: Wilder RSI(14), Stochastic (%K, %D)
+- **Volatility**: Bollinger Bands, Wilder True ATR(14) with stop-loss sizing, Realized Volatility
+- **Order & Foreign Flow**: Buy/Sell volume & count imbalances, Average trade size by side, Value spikes, Foreign net value, Room trend
+
+The engine refuses metrics this feed cannot support (`indicators/engine.py::UNSUPPORTED_METRICS`), and the skill instructs the agent to refuse rather than approximate.
 
 ## Data provenance: synthetic fixtures
 
