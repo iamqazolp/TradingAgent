@@ -46,6 +46,8 @@ CHECKS: dict[str, str] = {
     "macd.signal": "groups.trend.macd.latest.signal",
     "macd.histogram": "groups.trend.macd.latest.histogram",
     "adx_14.adx": "groups.trend.adx_14.latest.adx",
+    "adx_14.plus_di": "groups.trend.adx_14.latest.plus_di",
+    "adx_14.minus_di": "groups.trend.adx_14.latest.minus_di",
     "rsi_14": "groups.momentum.rsi_14.latest",
     "stoch_14_3.k": "groups.momentum.stoch_14_3.latest.k",
     "stoch_14_3.d": "groups.momentum.stoch_14_3.latest.d",

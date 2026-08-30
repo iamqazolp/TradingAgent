@@ -34,30 +34,8 @@ from indicators.volume_flow import (
 REQUIRED_COLUMNS = (
     "date",
     "prev_close",
-    "open",
-    "high",
-    "low",
     "close",
-    "total_trade",
-    "total_value",
-    "total_volume",
-    "buy_count",
-    "sell_count",
-    "buy_volume",
-    "sell_volume",
-    "foreign_buy_volume",
-    "foreign_sell_volume",
-    "foreign_buy_value",
-    "foreign_sell_value",
-    "foreign_room",
-)
-
-#: Base legacy columns required even if open/high/low are auto-filled.
-_BASE_COLUMNS = (
-    "date",
-    "prev_close",
-    "close",
-    "total_trade",
+    "total_trade",  
     "total_value",
     "total_volume",
     "buy_count",
@@ -85,6 +63,7 @@ _FRAME_GROUPS: dict[str, Callable[[pd.DataFrame, dict | None], dict]] = {
 GROUPS: tuple[str, ...] = tuple(_FRAME_GROUPS)
 
 #: What this feed cannot support, and the honest substitute where one exists.
+#: Surfaced to the agent so it declines rather than fabricates.
 UNSUPPORTED_METRICS: dict[str, str] = {
     "open_price": "not in this feed; only close and previous close are available",
     "overnight_gap": "needs the open price, which this feed does not provide",
@@ -118,13 +97,12 @@ def rows_to_frame(rows: list[dict]) -> pd.DataFrame:
     """Build a date-indexed, ascending, numeric frame from stored row dicts."""
     if not rows:
         raise EngineError("no rows supplied")
-    
     first = rows[0]
-    missing_base = [c for c in _BASE_COLUMNS if c not in first]
-    if missing_base:
-        raise EngineError(f"rows are missing required columns: {', '.join(missing_base)}")
-
-    # Copy and ensure open, high, low exist
+    missing = [c for c in REQUIRED_COLUMNS if c not in first and c not in ("open", "high", "low")]
+    if missing:
+        raise EngineError(f"rows are missing required columns: {', '.join(missing)}")
+    
+    # Ensure open, high, low exist with valid geometry
     norm_rows = []
     for r in rows:
         item = dict(r)
@@ -212,7 +190,11 @@ def compute(
 
 
 def flow_summary(rows: list[dict], window: int = 5) -> dict:
-    """The cheap flow-only answer: is money, and specifically foreign money, coming in?"""
+    """The cheap flow-only answer: is money, and specifically foreign money, coming in?
+
+    Deliberately narrow so an agent can answer "are foreigners net buying this
+    week?" without paying for a full indicator pass.
+    """
     frame = rows_to_frame(rows)
     volume_imbalance = buy_sell_volume_imbalance(frame, window)
     count_imbalance = buy_sell_count_imbalance(frame, window)
@@ -273,14 +255,18 @@ def _flow_notes(volume_imbalance, count_imbalance, net_value, room) -> list[str]
 
 
 def data_quality(frame: pd.DataFrame, gap_threshold_days: int = 5) -> dict:
-    """Data-quality flags that must travel with any numeric answer."""
+    """Data-quality flags that must travel with any numeric answer.
+
+    Reports calendar gaps, zero-volume (likely halted) days, and closes that
+    disagree with the next row's `prev_close`, which is the fingerprint of an
+    unadjusted split or stock dividend.
+    """
     dates = [str(d) for d in frame.index]
     gaps: list[dict] = []
     parsed: list[date | None] = []
     for value in dates:
         try:
-            val_date = value.split(" ")[0].split("T")[0]
-            parsed.append(datetime.strptime(val_date, "%Y-%m-%d").date())
+            parsed.append(datetime.strptime(value, "%Y-%m-%d").date())
         except ValueError:
             parsed.append(None)
     for i in range(1, len(parsed)):
@@ -335,14 +321,18 @@ def _quality_warnings(gaps: list, zero_volume: list, corporate_actions: list) ->
 
 
 def serialize(obj: Any, series_tail: int = 10) -> Any:
-    """Recursively convert pandas/numpy values into JSON-safe primitives."""
+    """Recursively convert pandas/numpy values into JSON-safe primitives.
+
+    Series become ``{"dates": [...], "values": [...]}`` trimmed to the last
+    `series_tail` points; NaN and inf become ``null``.
+    """
     if isinstance(obj, pd.Series):
         tail = obj if series_tail is None or series_tail <= 0 else obj.tail(series_tail)
         return {
             "dates": [str(i) for i in tail.index],
             "values": [finite(v) for v in tail.to_numpy()],
         }
-    if isinstance(obj, pd.DataFrame):
+    if isinstance(obj, pd.DataFrame):  # pragma: no cover - not produced today
         return {c: serialize(obj[c], series_tail) for c in obj.columns}
     if isinstance(obj, dict):
         return {k: serialize(v, series_tail) for k, v in obj.items()}
