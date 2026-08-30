@@ -218,21 +218,31 @@ def parse_record(raw: dict) -> dict:
     if "prev_close" not in row:
         raise IngestError("missing PricePreviousClose")
 
-    # Fallbacks for missing open/high/low
-    if "open" not in row or row["open"] is None:
-        row["open"] = row["prev_close"]
-    if "high" not in row or row["high"] is None:
-        row["high"] = max(row["close"], row["open"], row["prev_close"])
-    if "low" not in row or row["low"] is None:
-        row["low"] = min(row["close"], row["open"], row["prev_close"])
+    # Handle open/high/low for single-source vs dual-source feeds
+    had_explicit_ohlc = any(
+        k in raw and _clean(raw[k]) is not None
+        for k in ("PriceOpen", "Open", "PriceHigh", "High", "PriceLow", "Low")
+    )
+    if had_explicit_ohlc:
+        if "open" not in row or row["open"] is None or row["open"] == 0:
+            row["open"] = row["prev_close"]
+        if "high" not in row or row["high"] is None or row["high"] == 0:
+            row["high"] = max(row["close"], row["open"], row["prev_close"])
+        if "low" not in row or row["low"] is None or row["low"] == 0:
+            row["low"] = min(row["close"], row["open"], row["prev_close"])
 
-    # Validate OHLC geometry
-    if row["high"] < row["low"]:
-        raise IngestError(f"High ({row['high']}) cannot be lower than Low ({row['low']})")
-    if row["high"] < row["close"] - 1e-6 or row["high"] < row["open"] - 1e-6:
-        raise IngestError(f"High ({row['high']}) cannot be lower than Open ({row['open']}) or Close ({row['close']})")
-    if row["low"] > row["close"] + 1e-6 or row["low"] > row["open"] + 1e-6:
-        raise IngestError(f"Low ({row['low']}) cannot be higher than Open ({row['open']}) or Close ({row['close']})")
+        # Validate OHLC geometry
+        if row["high"] < row["low"]:
+            raise IngestError(f"High ({row['high']}) cannot be lower than Low ({row['low']})")
+        if row["high"] < row["close"] - 1e-6 or row["high"] < row["open"] - 1e-6:
+            raise IngestError(f"High ({row['high']}) cannot be lower than Open ({row['open']}) or Close ({row['close']})")
+        if row["low"] > row["close"] + 1e-6 or row["low"] > row["open"] + 1e-6:
+            raise IngestError(f"Low ({row['low']}) cannot be higher than Open ({row['open']}) or Close ({row['close']})")
+    else:
+        # Absence of explicit OHLC in flow feed (Source 1)
+        row["open"] = 0.0
+        row["high"] = 0.0
+        row["low"] = 0.0
 
     return row
 
@@ -335,39 +345,88 @@ def fetch_trading_statistics(
     end: str,
     *,
     url: str | None = None,
-    timeout: float = 30.0,
+    timeout: float = 15.0,
+    source: str = "auto",
 ) -> list[dict]:
-    """Fetch raw records from the live feed.
+    """Fetch raw records from the live feed(s).
 
-    The endpoint is supplied by the operator via ``TA_AGENT_API_URL`` (or the
-    ``url`` argument); an optional bearer token comes from
-    ``TA_AGENT_API_TOKEN``. Query parameter names follow the documented feed
-    (``symbol``, ``fromDate``, ``toDate``); override them with
-    ``TA_AGENT_API_PARAMS`` as a JSON object of ``{"our_name": "their_name"}``
-    if the real endpoint spells them differently. The response envelope does not
-    need to be known in advance, ``extract_records`` handles it.
+    Supports single-endpoint mode (``TA_AGENT_API_URL``) or dual-source mode:
+    - Market OHLC + Order Flow (Source 2): ``TA_AGENT_MARKET_API_URL``
+    - Foreign Flow & Room (Source 1): ``TA_AGENT_FOREIGN_API_URL``
+
+    `source` can be 'auto', 'market', 'foreign', or 'all'.
     """
-    url = url or os.environ.get("TA_AGENT_API_URL")
-    if not url:
+    market_url = os.environ.get("TA_AGENT_MARKET_API_URL")
+    foreign_url = os.environ.get("TA_AGENT_FOREIGN_API_URL")
+    single_url = url or os.environ.get("TA_AGENT_API_URL")
+
+    # Determine which URLs to fetch
+    targets: list[tuple[str, str | None, dict | None]] = []
+
+    if url:
+        targets.append((url, os.environ.get("TA_AGENT_API_TOKEN"), _load_param_override("TA_AGENT_API_PARAMS")))
+    elif source == "market" and market_url:
+        targets.append((market_url, os.environ.get("TA_AGENT_MARKET_API_TOKEN"), _load_param_override("TA_AGENT_MARKET_API_PARAMS")))
+    elif source == "foreign" and foreign_url:
+        targets.append((foreign_url, os.environ.get("TA_AGENT_FOREIGN_API_TOKEN"), _load_param_override("TA_AGENT_FOREIGN_API_PARAMS")))
+    elif source in ("all", "auto") and market_url and foreign_url:
+        targets.append((market_url, os.environ.get("TA_AGENT_MARKET_API_TOKEN"), _load_param_override("TA_AGENT_MARKET_API_PARAMS")))
+        targets.append((foreign_url, os.environ.get("TA_AGENT_FOREIGN_API_TOKEN"), _load_param_override("TA_AGENT_FOREIGN_API_PARAMS")))
+    elif single_url:
+        targets.append((single_url, os.environ.get("TA_AGENT_API_TOKEN"), _load_param_override("TA_AGENT_API_PARAMS")))
+    else:
         raise IngestError(
-            "no live endpoint configured; set TA_AGENT_API_URL or ingest a saved "
-            "response with --file"
+            "no live endpoint configured; set TA_AGENT_API_URL (or TA_AGENT_MARKET_API_URL "
+            "and TA_AGENT_FOREIGN_API_URL) or ingest a saved response with --file"
         )
+
+    all_records: list[dict] = []
+    for endpoint_url, token, override_params in targets:
+        records = _fetch_single_endpoint(
+            endpoint_url,
+            ticker=ticker,
+            start=start,
+            end=end,
+            token=token,
+            override_params=override_params,
+            timeout=timeout,
+        )
+        all_records.extend(records)
+
+    return all_records
+
+
+def _load_param_override(env_var: str) -> dict | None:
+    val = os.environ.get(env_var)
+    if val:
+        try:
+            return json.loads(val)
+        except Exception:
+            return None
+    return None
+
+
+def _fetch_single_endpoint(
+    url: str,
+    *,
+    ticker: str,
+    start: str,
+    end: str,
+    token: str | None = None,
+    override_params: dict | None = None,
+    timeout: float = 15.0,
+) -> list[dict]:
     names = {"symbol": "symbol", "fromDate": "fromDate", "toDate": "toDate"}
-    override = os.environ.get("TA_AGENT_API_PARAMS")
-    if override:
-        names.update(json.loads(override))
+    if override_params:
+        names.update(override_params)
     query = urllib.parse.urlencode(
         {names["symbol"]: ticker.upper(), names["fromDate"]: start, names["toDate"]: end}
     )
     full_url = f"{url}{'&' if '?' in url else '?'}{query}"
     request = urllib.request.Request(full_url, headers={"Accept": "application/json"})
-    token = os.environ.get("TA_AGENT_API_TOKEN")
     if token:
         request.add_header("Authorization", f"Bearer {token}")
-    logger.info("fetching %s %s..%s", ticker, start, end)
-    # Transport and auth problems are the operator's to fix, so they get the
-    # endpoint's own words back rather than a urllib traceback.
+    logger.info("fetching %s %s..%s from %s", ticker, start, end, url)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read().decode("utf-8")
@@ -387,7 +446,6 @@ def fetch_trading_statistics(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
-        # An HTML login or error page is the usual culprit here.
         raise IngestError(
             f"feed response from {url} is not JSON ({exc}); first 200 chars: {body[:200]!r}"
         ) from exc
@@ -430,6 +488,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     source.add_argument("--ticker", help="fetch this ticker from the live feed")
     parser.add_argument("--start", help="from date, YYYY-MM-DD (live fetch)")
     parser.add_argument("--end", help="to date, YYYY-MM-DD (live fetch)")
+    parser.add_argument(
+        "--source",
+        choices=["auto", "market", "foreign", "all"],
+        default="auto",
+        help="data source to fetch (default: auto)",
+    )
     parser.add_argument("--db", help="SQLite path (default: TA_AGENT_DB or var/ta.sqlite)")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
@@ -444,7 +508,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             if not (args.start and args.end):
                 parser.error("--ticker requires --start and --end")
-            raws = fetch_trading_statistics(args.ticker, args.start, args.end)
+            raws = fetch_trading_statistics(args.ticker, args.start, args.end, source=args.source)
     except IngestError as exc:
         print(f"ingest failed: {exc}", file=sys.stderr)
         return 1

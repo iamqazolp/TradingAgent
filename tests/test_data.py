@@ -295,3 +295,63 @@ def test_dotenv_loading(tmp_path, monkeypatch):
     assert os.environ.get("TA_AGENT_TEST_KEY") == "secret_123"
     assert os.environ.get("TA_AGENT_API_TOKEN") == "custom_token"
 
+
+def test_dual_source_non_destructive_merge(conn):
+    # Source 2 arrives first: Market OHLC + Volume + Buy/Sell Flow (no foreign)
+    source2_market_record = {
+        "Symbol": "HPG",
+        "Date": "15/01/2026",
+        "PricePreviousClose": "27,000",
+        "PriceOpen": "27,200",
+        "PriceHigh": "28,000",
+        "PriceLow": "26,900",
+        "PriceClose": "27,800",
+        "TotalVolume": "10,000,000",
+        "TotalTrade": "5,000",
+        "BuyQuantity": "6,000,000",
+        "SellQuantity": "4,000,000",
+    }
+    ingest.ingest_records([source2_market_record], conn)
+    row = store.get_range(conn, "HPG", "2026-01-15", "2026-01-15")[0]
+    assert row["open"] == 27_200.0
+    assert row["high"] == 28_000.0
+    assert row["low"] == 26_900.0
+    assert row["close"] == 27_800.0
+    assert row["buy_volume"] == 6_000_000
+    assert row["foreign_buy_volume"] == 0
+
+    # Source 1 arrives second: Foreign Flow & Room (no OHLC)
+    source1_foreign_record = {
+        "Symbol": "HPG",
+        "Date": "15/01/2026",
+        "PricePreviousClose": "27,000",
+        "PriceClose": "27,800",
+        "ForeignerBuyQuantity": "1,500,000",
+        "ForeignerSellQuantity": "500,000",
+        "ForeignerBuyValue": "41,700,000,000",
+        "ForeignerSellValue": "13,900,000,000",
+        "CurrentForeignRoom": "500,000,000",
+    }
+    ingest.ingest_records([source1_foreign_record], conn)
+    merged = store.get_range(conn, "HPG", "2026-01-15", "2026-01-15")[0]
+
+    # OHLC & flow from Source 2 are PRESERVED:
+    assert merged["open"] == 27_200.0
+    assert merged["high"] == 28_000.0
+    assert merged["low"] == 26_900.0
+    assert merged["close"] == 27_800.0
+    assert merged["buy_volume"] == 6_000_000
+
+    # Foreign stats from Source 1 are UPDATED:
+    assert merged["foreign_buy_volume"] == 1_500_000
+    assert merged["foreign_sell_volume"] == 500_000
+    assert merged["foreign_buy_value"] == 41_700_000_000.0
+    assert merged["foreign_room"] == 500_000_000
+
+    # Re-running Source 2 does NOT overwrite foreign stats:
+    ingest.ingest_records([source2_market_record], conn)
+    re_merged = store.get_range(conn, "HPG", "2026-01-15", "2026-01-15")[0]
+    assert re_merged["open"] == 27_200.0
+    assert re_merged["foreign_buy_volume"] == 1_500_000
+    assert re_merged["foreign_room"] == 500_000_000
+

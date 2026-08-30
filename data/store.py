@@ -52,7 +52,26 @@ ON CONFLICT(ticker, date) DO UPDATE SET {updates}
 """.format(
     cols=", ".join(COLUMNS),
     placeholders=", ".join(f":{c}" for c in COLUMNS),
-    updates=", ".join(f"{c}=excluded.{c}" for c in COLUMNS if c not in ("ticker", "date")),
+    updates=", ".join(
+        f"{c}=CASE WHEN excluded.{c} IS NOT NULL AND excluded.{c} != 0 THEN excluded.{c} ELSE prices.{c} END"
+        if c in (
+            "open",
+            "high",
+            "low",
+            "buy_count",
+            "sell_count",
+            "buy_volume",
+            "sell_volume",
+            "foreign_buy_volume",
+            "foreign_sell_volume",
+            "foreign_buy_value",
+            "foreign_sell_value",
+            "foreign_room",
+        )
+        else f"{c}=excluded.{c}"
+        for c in COLUMNS
+        if c not in ("ticker", "date")
+    ),
 )
 
 
