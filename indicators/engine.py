@@ -34,8 +34,11 @@ from indicators.volume_flow import (
 REQUIRED_COLUMNS = (
     "date",
     "prev_close",
+    "open",
+    "high",
+    "low",
     "close",
-    "total_trade",  
+    "total_trade",
     "total_value",
     "total_volume",
     "buy_count",
@@ -174,6 +177,13 @@ def compute(
         "rows_used": int(len(frame)),
         "date_range": {"start": str(frame.index[0]), "end": str(frame.index[-1])},
         "latest_close": finite(close.iloc[-1]),
+        "latest_ohlc": {
+            "open": finite(frame["open"].iloc[-1]) if "open" in frame else None,
+            "high": finite(frame["high"].iloc[-1]) if "high" in frame else None,
+            "low": finite(frame["low"].iloc[-1]) if "low" in frame else None,
+            "close": finite(close.iloc[-1]),
+            "prev_close": finite(frame["prev_close"].iloc[-1]) if "prev_close" in frame else None,
+        },
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
     }
