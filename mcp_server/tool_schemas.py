@@ -14,8 +14,10 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from indicators.engine import GROUPS
+from data.resample import TimeframeStr, TIMEFRAMES
 
 GroupName = Literal["trend", "momentum", "volatility", "volume_flow", "trade_flow", "value_flow", "foreign_flow"]
+Timeframe = Literal["1H", "4H", "1D", "3D", "1W", "1M", "1Y"]
 
 Ticker = Annotated[str, Field(min_length=1, max_length=12, pattern=r"^[A-Za-z0-9]+$")]
 IsoDate = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
@@ -73,6 +75,15 @@ class RowSource(BaseModel):
     rows: list[PriceRow] | None = None
     ticker: Ticker | None = None
     lookback_days: int = Field(default=300, ge=2, le=5000)
+    timeframe: Timeframe = Field(default="1D", description="timeframe: 1H, 4H, 1D, 3D, 1W, 1M, 1Y")
+
+    @field_validator("timeframe", mode="before")
+    @classmethod
+    def _norm_tf(cls, value: str) -> str:
+        if isinstance(value, str):
+            from data.resample import normalize_timeframe
+            return normalize_timeframe(value)
+        return "1D"
 
     @model_validator(mode="after")
     def _one_source(self):
@@ -99,6 +110,15 @@ class GetPriceDataInput(BaseModel):
     )
     start: IsoDate | None = None
     end: IsoDate | None = None
+    timeframe: Timeframe = Field(default="1D", description="timeframe: 1H, 4H, 1D, 3D, 1W, 1M, 1Y")
+
+    @field_validator("timeframe", mode="before")
+    @classmethod
+    def _norm_tf(cls, value: str) -> str:
+        if isinstance(value, str):
+            from data.resample import normalize_timeframe
+            return normalize_timeframe(value)
+        return "1D"
 
     @field_validator("ticker")
     @classmethod

@@ -45,7 +45,10 @@ CHECKS: dict[str, str] = {
     "macd.macd": "groups.trend.macd.latest.macd",
     "macd.signal": "groups.trend.macd.latest.signal",
     "macd.histogram": "groups.trend.macd.latest.histogram",
+    "adx_14.adx": "groups.trend.adx_14.latest.adx",
     "rsi_14": "groups.momentum.rsi_14.latest",
+    "stoch_14_3.k": "groups.momentum.stoch_14_3.latest.k",
+    "stoch_14_3.d": "groups.momentum.stoch_14_3.latest.d",
     "bollinger_20_2.middle": "groups.volatility.bollinger_20_2.latest.middle",
     "bollinger_20_2.upper": "groups.volatility.bollinger_20_2.latest.upper",
     "bollinger_20_2.lower": "groups.volatility.bollinger_20_2.latest.lower",
@@ -54,6 +57,7 @@ CHECKS: dict[str, str] = {
     "close_to_close_volatility_20": (
         "groups.volatility.close_to_close_volatility_20.latest"
     ),
+    "atr_14": "groups.volatility.atr_14.latest",
     "buy_sell_volume_imbalance": "groups.volume_flow.buy_sell_volume_imbalance_5.latest",
     "buy_sell_volume_imbalance_avg_5": (
         "groups.volume_flow.buy_sell_volume_imbalance_5.latest_rolling_avg"

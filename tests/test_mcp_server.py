@@ -308,3 +308,33 @@ def test_an_unwritable_audit_log_does_not_break_a_working_call(monkeypatch):
     # their answer.
     monkeypatch.setenv("TA_AGENT_AUDIT_LOG", "/proc/nope/tool_calls.jsonl")
     assert call("get_price_data", {"ticker": TICKER, "lookback_days": 2})["row_count"] == 2
+
+
+# --------------------------------------------------------------------------- Timeframe & OHLC Tools
+
+
+def test_get_price_data_with_weekly_timeframe():
+    payload = call("get_price_data", {"ticker": TICKER, "lookback_days": 4, "timeframe": "1W"})
+    assert payload["timeframe"] == "1W"
+    assert payload["row_count"] == 4
+    for row in payload["rows"]:
+        assert "open" in row and "high" in row and "low" in row and "close" in row
+
+
+def test_compute_indicators_with_timeframe_and_unlocked_indicators():
+    payload = call("compute_indicators", {"ticker": TICKER, "lookback_days": 30, "timeframe": "1D"})
+    assert payload["timeframe"] == "1D"
+    groups = payload["groups"]
+    assert "trend" in groups and "momentum" in groups and "volatility" in groups
+    # Unlocked indicators are present
+    assert "atr_14" in groups["volatility"]
+    assert "adx_14" in groups["trend"]
+    assert "stoch_14_3" in groups["momentum"]
+    assert groups["volatility"]["atr_14"]["latest_atr"] is not None
+
+
+def test_get_flow_summary_with_timeframe():
+    payload = call("get_flow_summary", {"ticker": TICKER, "window": 2, "timeframe": "1W"})
+    assert payload["timeframe"] == "1W"
+    assert "buy_sell_volume_imbalance_avg" in payload
+

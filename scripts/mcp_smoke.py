@@ -119,10 +119,27 @@ async def run(ticker: str) -> int:
             print(
                 "compute_indicators: "
                 f"sma_20={groups['trend']['sma_20']['latest']:.1f} "
+                f"adx_14={groups['trend']['adx_14']['latest']['adx']:.2f} "
                 f"rsi_14={groups['momentum']['rsi_14']['latest']:.2f} "
+                f"stoch_k={groups['momentum']['stoch_14_3']['latest']['k']:.1f} "
                 f"macd={groups['trend']['macd']['latest']['macd']:.2f} "
-                "c2c_vol="
-                f"{groups['volatility']['close_to_close_volatility_20']['latest']:.2f}%"
+                f"atr_14={groups['volatility']['atr_14']['latest_atr']:.1f}"
+            )
+
+            # Multi-timeframe check (Weekly)
+            weekly_ind = await session.call_tool(
+                "compute_indicators",
+                {
+                    "ticker": ticker,
+                    "timeframe": "1W",
+                    "lookback_days": 50,
+                    "groups": ["trend", "momentum"],
+                },
+            )
+            w_groups = json.loads(text_of(weekly_ind))["groups"]
+            print(
+                f"weekly indicators: sma_20={w_groups['trend']['sma_20']['latest']:.1f} "
+                f"rsi_14={w_groups['momentum']['rsi_14']['latest']:.2f}"
             )
 
             # A newly listed ticker: three rows passed inline, so every window
@@ -140,10 +157,10 @@ async def run(ticker: str) -> int:
             print(f"  rsi_14  -> {momentum['rsi_14']['reason']}")
 
             unsupported = await session.call_tool(
-                "compute_indicators", {"ticker": ticker, "groups": ["atr"]}
+                "compute_indicators", {"ticker": ticker, "groups": ["sentiment_group"]}
             )
             print(
-                f"unsupported group 'atr' rejected: {unsupported.is_error}, "
+                f"unsupported group 'sentiment_group' rejected: {unsupported.is_error}, "
                 f"message: {text_of(unsupported)[:80]}"
             )
             bad = await session.call_tool("get_price_data", {"ticker": "not a ticker"})
