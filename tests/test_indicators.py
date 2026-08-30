@@ -31,7 +31,7 @@ from indicators.foreign_flow import (
 )
 from indicators.momentum import rsi, stochastic
 from indicators.trade_flow import avg_trade_size_by_side, buy_sell_count_imbalance
-from indicators.trend import adx, ema, ema_series, macd, sma
+from indicators.trend import adx, ema, ema_series, ichimoku, macd, sma
 from indicators.value_flow import avg_trade_value, value_spike
 from indicators.volatility import atr, bollinger, close_to_close_volatility
 from indicators.volume_flow import buy_sell_volume_imbalance, obv
@@ -499,4 +499,35 @@ def test_stochastic_crossover_and_zones():
     )
     result = stochastic(frame, k_window=3, d_window=2, slowing=1)
     assert result["zone"] == "overbought"
+
+
+def test_ichimoku_hand_calculated():
+    # 6 bars: tenkan=3, kijun=4, senkou_b=5
+    # Row 5 (last bar):
+    # past 3 highs: [18, 20, 22] -> max 22, lows: [14, 16, 18] -> min 14 => Tenkan = (22+14)/2 = 18.0
+    # past 4 highs: [16, 18, 20, 22] -> max 22, lows: [12, 14, 16, 18] -> min 12 => Kijun = (22+12)/2 = 17.0
+    # Span A = (18+17)/2 = 17.5
+    # past 5 highs: [14, 16, 18, 20, 22] -> max 22, lows: [10, 12, 14, 16, 18] -> min 10 => Span B = (22+10)/2 = 16.0
+    # Close = 20.0
+    frame = build_frame(
+        high=[12.0, 14.0, 16.0, 18.0, 20.0, 22.0],
+        low=[8.0, 10.0, 12.0, 14.0, 16.0, 18.0],
+        close=[10.0, 12.0, 14.0, 16.0, 18.0, 20.0],
+    )
+    result = ichimoku(frame, tenkan_n=3, kijun_n=4, senkou_b_n=5)
+    assert result["latest"]["tenkan_sen"] == pytest.approx(18.0)
+    assert result["latest"]["kijun_sen"] == pytest.approx(17.0)
+    assert result["latest"]["senkou_span_a"] == pytest.approx(17.5)
+    assert result["latest"]["senkou_span_b"] == pytest.approx(16.0)
+    assert result["latest"]["chikou_span"] == pytest.approx(20.0)
+    assert result["kumo_sentiment"] == "bullish"
+    assert result["price_vs_cloud"] == "above_cloud"
+    assert result["cloud_thickness"] == pytest.approx(1.5)
+    assert result["cloud_thickness_pct"] == pytest.approx(1.5 / 20.0 * 100.0)
+
+
+def test_ichimoku_requires_senkou_b_window():
+    frame = build_frame(close=[10.0] * 10)
+    assert_insufficient(ichimoku(frame, 9, 26, 52), required=52)
+
 

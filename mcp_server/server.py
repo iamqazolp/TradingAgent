@@ -52,7 +52,7 @@ Available per ticker:
   - Foreign flow: foreign buy/sell volume and value, remaining foreign room
 
 Indicators supported:
-  - Trend: SMA, EMA, MACD, ADX/DMI (Wilder)
+  - Trend: SMA, EMA, MACD, ADX/DMI (Wilder), Ichimoku Kinko Hyo (Tenkan, Kijun, Kumo Cloud)
   - Momentum: Wilder RSI(14), Stochastic (%K, %D)
   - Volatility: Bollinger Bands, True ATR (Wilder), Realized Volatility
   - Order & Foreign Flow: Buy/sell imbalances, Average trade size by side, Value spikes, Foreign net value, Room trend

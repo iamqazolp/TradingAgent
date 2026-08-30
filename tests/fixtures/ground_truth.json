@@ -40,6 +40,13 @@
     "k": 64.25255338904364,
     "d": 69.82358402971217
    },
+   "ichimoku": {
+    "tenkan_sen": 37775.0,
+    "kijun_sen": 37970.0,
+    "senkou_span_a": 37872.5,
+    "senkou_span_b": 38130.0,
+    "chikou_span": 37050.0
+   },
    "buy_sell_volume_imbalance": -0.5141161310761387,
    "buy_sell_volume_imbalance_avg_5": -0.08131453134174228,
    "buy_sell_count_imbalance": -0.39412484700122397,
@@ -96,6 +103,13 @@
     "k": 97.52475247524752,
     "d": 89.7139713971397
    },
+   "ichimoku": {
+    "tenkan_sen": 12300.0,
+    "kijun_sen": 11755.0,
+    "senkou_span_a": 12027.5,
+    "senkou_span_b": 12905.0,
+    "chikou_span": 13060.0
+   },
    "buy_sell_volume_imbalance": 0.48640359467711275,
    "buy_sell_volume_imbalance_avg_5": 0.18679511542394517,
    "buy_sell_count_imbalance": 0.36585365853658536,
@@ -151,6 +165,13 @@
    "stoch_14_3": {
     "k": 31.56662293170056,
     "d": 51.91006390164492
+   },
+   "ichimoku": {
+    "tenkan_sen": 68110.0,
+    "kijun_sen": 67015.0,
+    "senkou_span_a": 67562.5,
+    "senkou_span_b": 68260.0,
+    "chikou_span": 67890.0
    },
    "buy_sell_volume_imbalance": 0.2779239902966336,
    "buy_sell_volume_imbalance_avg_5": -0.07926043770022735,

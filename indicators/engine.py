@@ -70,7 +70,6 @@ UNSUPPORTED_METRICS: dict[str, str] = {
         "true intraday tick VWAP needs sub-minute tick data; total_value / total_volume gives a "
         "period average traded price, which is not the same thing"
     ),
-    "ichimoku": "not implemented in v1; use SMA alignment plus MACD for trend structure",
     "market_breadth": "needs multi-ticker index data; out of scope for single-ticker TA",
     "fundamentals": "not in this market data feed",
     "news_sentiment": "not in this market data feed",

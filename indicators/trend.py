@@ -219,6 +219,115 @@ def _crossover(previous: float | None, current: float | None) -> str:
     return "none"
 
 
+def ichimoku(
+    data: pd.DataFrame,
+    tenkan_n: int = 9,
+    kijun_n: int = 26,
+    senkou_b_n: int = 52,
+    displacement: int = 26,
+) -> dict:
+    """Ichimoku Kinko Hyo (Equilibrium Chart).
+
+    Components (classic 9, 26, 52 parameters):
+      - Tenkan-sen (Conversion Line): (9-period High + 9-period Low) / 2
+      - Kijun-sen (Base Line): (26-period High + 26-period Low) / 2
+      - Senkou Span A (Leading Span A): (Tenkan-sen + Kijun-sen) / 2
+      - Senkou Span B (Leading Span B): (52-period High + 52-period Low) / 2
+      - Chikou Span (Lagging Span): Close
+    """
+    required = senkou_b_n
+    marker = require(data.index.to_series(), required, f"ichimoku({tenkan_n},{kijun_n},{senkou_b_n})")
+    if marker:
+        return marker
+
+    high = pd.to_numeric(data["high"], errors="coerce").astype("float64")
+    low = pd.to_numeric(data["low"], errors="coerce").astype("float64")
+    close = pd.to_numeric(data["close"], errors="coerce").astype("float64")
+
+    tenkan = (high.rolling(tenkan_n).max() + low.rolling(tenkan_n).min()) / 2.0
+    kijun = (high.rolling(kijun_n).max() + low.rolling(kijun_n).min()) / 2.0
+    senkou_a = (tenkan + kijun) / 2.0
+    senkou_b = (high.rolling(senkou_b_n).max() + low.rolling(senkou_b_n).min()) / 2.0
+
+    tenkan_now = latest(tenkan)
+    kijun_now = latest(kijun)
+    senkou_a_now = latest(senkou_a)
+    senkou_b_now = latest(senkou_b)
+    close_now = latest(close)
+
+    if tenkan_now is None or kijun_now is None or senkou_a_now is None or senkou_b_now is None:
+        return insufficient(
+            f"ichimoku({tenkan_n},{kijun_n},{senkou_b_n}) has no value on the latest row",
+            required,
+            int(len(data)),
+        )
+
+    t_prev = float(tenkan.iloc[-2]) if len(tenkan) > 1 else None
+    k_prev = float(kijun.iloc[-2]) if len(kijun) > 1 else None
+    if t_prev is not None and k_prev is not None:
+        if t_prev <= k_prev and tenkan_now > kijun_now:
+            tk_cross = "bullish_cross"
+        elif t_prev >= k_prev and tenkan_now < kijun_now:
+            tk_cross = "bearish_cross"
+        elif tenkan_now > kijun_now:
+            tk_cross = "bullish_alignment"
+        elif tenkan_now < kijun_now:
+            tk_cross = "bearish_alignment"
+        else:
+            tk_cross = "neutral"
+    else:
+        tk_cross = (
+            "bullish_alignment"
+            if tenkan_now > kijun_now
+            else "bearish_alignment"
+            if tenkan_now < kijun_now
+            else "neutral"
+        )
+
+    cloud_top = max(senkou_a_now, senkou_b_now)
+    cloud_bottom = min(senkou_a_now, senkou_b_now)
+    cloud_thickness = abs(senkou_a_now - senkou_b_now)
+    cloud_thickness_pct = (cloud_thickness / close_now * 100.0) if close_now and close_now > 0 else 0.0
+
+    if senkou_a_now > senkou_b_now:
+        kumo_sentiment = "bullish"
+    elif senkou_a_now < senkou_b_now:
+        kumo_sentiment = "bearish"
+    else:
+        kumo_sentiment = "neutral"
+
+    if close_now is not None and close_now > cloud_top:
+        price_vs_cloud = "above_cloud"
+    elif close_now is not None and close_now < cloud_bottom:
+        price_vs_cloud = "below_cloud"
+    else:
+        price_vs_cloud = "inside_cloud"
+
+    return {
+        "tenkan_window": tenkan_n,
+        "kijun_window": kijun_n,
+        "senkou_b_window": senkou_b_n,
+        "displacement": displacement,
+        "latest": {
+            "tenkan_sen": tenkan_now,
+            "kijun_sen": kijun_now,
+            "senkou_span_a": senkou_a_now,
+            "senkou_span_b": senkou_b_now,
+            "chikou_span": close_now,
+        },
+        "tk_cross": tk_cross,
+        "kumo_sentiment": kumo_sentiment,
+        "price_vs_cloud": price_vs_cloud,
+        "cloud_thickness": cloud_thickness,
+        "cloud_thickness_pct": cloud_thickness_pct,
+        "tenkan_series": tenkan.rename("tenkan_sen"),
+        "kijun_series": kijun.rename("kijun_sen"),
+        "senkou_a_series": senkou_a.rename("senkou_span_a"),
+        "senkou_b_series": senkou_b.rename("senkou_span_b"),
+        "chikou_series": close.rename("chikou_span"),
+    }
+
+
 def trend_group(data: pd.DataFrame | pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
@@ -239,4 +348,9 @@ def trend_group(data: pd.DataFrame | pd.Series, params: dict | None = None) -> d
     if isinstance(data, pd.DataFrame) and "high" in data.columns and "low" in data.columns:
         adx_n = params.get("adx_window", 14)
         out[f"adx_{adx_n}"] = adx(data, adx_n)
+        tenkan_n = params.get("ichimoku_tenkan", 9)
+        kijun_n = params.get("ichimoku_kijun", 26)
+        senkou_b_n = params.get("ichimoku_senkou_b", 52)
+        displacement = params.get("ichimoku_displacement", 26)
+        out["ichimoku"] = ichimoku(data, tenkan_n, kijun_n, senkou_b_n, displacement)
     return out

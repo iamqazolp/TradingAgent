@@ -55,10 +55,13 @@ Supported timeframes: `1H` (hourly), `4H` (4-hour), `1D` (daily), `3D` (3-day), 
 
 ## Group-by-group reasoning
 
-**Trend — SMA alignment, MACD, and ADX/DMI.**
+**Trend — SMA alignment, MACD, ADX/DMI, and Ichimoku Kinko Hyo.**
 - Price above rising SMA20 > SMA50 > SMA200 is an aligned uptrend; inverse is downtrend.
 - MACD adds momentum inside the swing (histogram sign and crossovers).
 - **ADX(14)** measures trend strength: ADX >= 25 indicates a strong trending market; ADX < 20 indicates ranging/consolidation. Directional bias comes from +DI vs -DI (+DI > -DI is bullish).
+- **Ichimoku (9, 26, 52)**:
+  - Tenkan-sen / Kijun-sen (`tk_cross`): Bullish cross/alignment when Tenkan > Kijun; bearish when Tenkan < Kijun.
+  - Kumo Cloud (`kumo_sentiment` & `price_vs_cloud`): Price `above_cloud` represents strong bullish structure; `below_cloud` represents bearish overhead resistance; `inside_cloud` indicates consolidation. Cloud thickness measures support/resistance depth.
 
 **Momentum — Wilder RSI(14) and Stochastic (%K, %D).**
 - RSI: Over 70 overbought, under 30 oversold. Look for divergence against price.

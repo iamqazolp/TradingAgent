@@ -231,7 +231,7 @@ def test_serialize_maps_nan_to_null_and_trims_series():
 
 
 def test_unsupported_metrics_are_refused_with_a_reason():
-    for metric in ("sub_hour_intraday", "vwap", "market_breadth", "fundamentals", "news_sentiment", "ichimoku"):
+    for metric in ("sub_hour_intraday", "vwap", "market_breadth", "fundamentals", "news_sentiment"):
         result = unsupported(metric)
         assert result["unsupported"] is True
         assert result["reason"]
@@ -243,7 +243,6 @@ def test_unsupported_list_covers_every_unsupported_metric():
     for metric in (
         "sub_hour_intraday",
         "vwap",
-        "ichimoku",
         "market_breadth",
         "fundamentals",
         "news_sentiment",

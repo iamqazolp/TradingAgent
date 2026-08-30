@@ -308,6 +308,42 @@ def stoch_truth(rows: list[dict], k_window: int = 14, d_window: int = 3, slowing
     }
 
 
+def ichimoku_truth(rows: list[dict], tenkan_n: int = 9, kijun_n: int = 26, senkou_b_n: int = 52) -> dict:
+    """Ichimoku Kinko Hyo components in stdlib."""
+    if len(rows) < senkou_b_n:
+        return {
+            "tenkan_sen": None,
+            "kijun_sen": None,
+            "senkou_span_a": None,
+            "senkou_span_b": None,
+            "chikou_span": None,
+        }
+    tenkan_window = rows[-tenkan_n:]
+    t_h = max(r["high"] for r in tenkan_window)
+    t_l = min(r["low"] for r in tenkan_window)
+    tenkan = (t_h + t_l) / 2.0
+
+    kijun_window = rows[-kijun_n:]
+    k_h = max(r["high"] for r in kijun_window)
+    k_l = min(r["low"] for r in kijun_window)
+    kijun = (k_h + k_l) / 2.0
+
+    span_a = (tenkan + kijun) / 2.0
+
+    senkou_b_window = rows[-senkou_b_n:]
+    sb_h = max(r["high"] for r in senkou_b_window)
+    sb_l = min(r["low"] for r in senkou_b_window)
+    span_b = (sb_h + sb_l) / 2.0
+
+    return {
+        "tenkan_sen": tenkan,
+        "kijun_sen": kijun,
+        "senkou_span_a": span_a,
+        "senkou_span_b": span_b,
+        "chikou_span": rows[-1]["close"],
+    }
+
+
 # --------------------------------------------------------------------------- assembly
 
 
@@ -357,6 +393,7 @@ def ticker_truth(rows: list[dict], window: int = 5) -> dict:
         "atr_14": atr_truth(rows, 14),
         "adx_14": adx_truth(rows, 14),
         "stoch_14_3": stoch_truth(rows, 14, 3, 3),
+        "ichimoku": ichimoku_truth(rows, 9, 26, 52),
         "buy_sell_volume_imbalance": volume_imbalance[-1],
         "buy_sell_volume_imbalance_avg_5": mean_of_last(volume_imbalance, window),
         "buy_sell_count_imbalance": count_imbalance[-1],
