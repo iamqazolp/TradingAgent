@@ -47,6 +47,12 @@ RECORDS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def clean_env(monkeypatch):
+    monkeypatch.delenv("TA_AGENT_MARKET_API_URL", raising=False)
+    monkeypatch.delenv("TA_AGENT_FOREIGN_API_URL", raising=False)
+
+
 @pytest.fixture
 def feed():
     """A running mock endpoint, parameterised through `request.param`-style kwargs."""

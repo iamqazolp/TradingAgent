@@ -140,6 +140,8 @@ def test_extract_records_unwraps_whatever_envelope_arrives():
 
 def test_fetch_requires_a_configured_endpoint(monkeypatch):
     monkeypatch.delenv("TA_AGENT_API_URL", raising=False)
+    monkeypatch.delenv("TA_AGENT_MARKET_API_URL", raising=False)
+    monkeypatch.delenv("TA_AGENT_FOREIGN_API_URL", raising=False)
     with pytest.raises(ingest.IngestError, match="no live endpoint configured"):
         ingest.fetch_trading_statistics("VNM", "2026-01-01", "2026-01-31")
 

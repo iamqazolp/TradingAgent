@@ -429,11 +429,14 @@ def fetch_trading_statistics(
         targets.append((market_url, os.environ.get("TA_AGENT_MARKET_API_TOKEN"), _load_param_override("TA_AGENT_MARKET_API_PARAMS")))
     elif source == "foreign" and foreign_url:
         targets.append((foreign_url, os.environ.get("TA_AGENT_FOREIGN_API_TOKEN"), _load_param_override("TA_AGENT_FOREIGN_API_PARAMS")))
-    elif source in ("all", "auto") and market_url and foreign_url:
+    elif source == "all" and market_url and foreign_url:
         targets.append((market_url, os.environ.get("TA_AGENT_MARKET_API_TOKEN"), _load_param_override("TA_AGENT_MARKET_API_PARAMS")))
         targets.append((foreign_url, os.environ.get("TA_AGENT_FOREIGN_API_TOKEN"), _load_param_override("TA_AGENT_FOREIGN_API_PARAMS")))
     elif single_url:
         targets.append((single_url, os.environ.get("TA_AGENT_API_TOKEN"), _load_param_override("TA_AGENT_API_PARAMS")))
+    elif market_url and foreign_url:
+        targets.append((market_url, os.environ.get("TA_AGENT_MARKET_API_TOKEN"), _load_param_override("TA_AGENT_MARKET_API_PARAMS")))
+        targets.append((foreign_url, os.environ.get("TA_AGENT_FOREIGN_API_TOKEN"), _load_param_override("TA_AGENT_FOREIGN_API_PARAMS")))
     else:
         raise IngestError(
             "no live endpoint configured; set TA_AGENT_API_URL (or TA_AGENT_MARKET_API_URL "

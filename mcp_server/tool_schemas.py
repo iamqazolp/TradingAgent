@@ -159,9 +159,13 @@ class ComputeIndicatorsInput(RowSource):
         default=10, ge=0, le=100, description="points of each series to return; 0 for none"
     )
 
-    @field_validator("groups")
+    @field_validator("groups", mode="before")
     @classmethod
-    def _known_groups(cls, value: list[str]) -> list[str]:
+    def _known_groups(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            value = [g.strip() for g in value.split(",") if g.strip()]
+        elif not isinstance(value, (list, tuple)):
+            value = [value]
         unknown = [g for g in value if g not in GROUPS]
         if unknown:
             raise ValueError(
