@@ -43,12 +43,8 @@ PROMPT = "Are foreigners buying VNM this week?"
 
 
 def load_mock_model():
-    spec = importlib.util.spec_from_file_location(
-        "mock_model", REPO_ROOT / "scripts" / "mock_model.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from tests.mocks import mock_model
+    return mock_model
 
 
 def config_dir() -> Path:

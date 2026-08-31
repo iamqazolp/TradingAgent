@@ -22,17 +22,7 @@ from data import ingest, store
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _load_mock_feed():
-    """Import scripts/mock_feed.py by path; scripts/ is not a package."""
-    spec = importlib.util.spec_from_file_location(
-        "mock_feed", REPO_ROOT / "scripts" / "mock_feed.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-mock_feed = _load_mock_feed()
+from tests.mocks import mock_feed
 
 RECORDS = [
     {

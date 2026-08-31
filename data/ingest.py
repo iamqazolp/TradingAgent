@@ -288,9 +288,17 @@ def parse_records(raws: Iterable[dict]) -> IngestReport:
             logger.warning(message)
         key = (row["ticker"], row["date"])
         if key in seen:
-            # Later record wins; the store would upsert to the same effect anyway.
-            report.rows[seen[key]] = row
-            report.warnings.append(f"{key[0]} {key[1]}: duplicate record in payload")
+            idx = seen[key]
+            existing = report.rows[idx]
+            merged = dict(existing)
+            for k, v in row.items():
+                # Prefer non-zero/non-null values when merging partial records
+                if v is not None and v != 0 and v != 0.0:
+                    merged[k] = v
+                elif k not in merged or merged[k] is None or merged[k] == 0:
+                    merged[k] = v
+            report.rows[idx] = merged
+            report.warnings.append(f"{key[0]} {key[1]}: merged duplicate record in payload")
         else:
             seen[key] = len(report.rows)
             report.rows.append(row)
@@ -337,6 +345,58 @@ def load_json(path: str | Path) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- live feed
+
+
+def fetch_market_bars(
+    ticker: str,
+    start: str,
+    end: str,
+    *,
+    timeframe: str = "1D",
+    url: str | None = None,
+    timeout: float = 15.0,
+) -> list[dict]:
+    """Fetch OHLC & order flow records from the configured market feed (Source 2)."""
+    endpoint = url or os.environ.get("TA_AGENT_MARKET_API_URL") or os.environ.get("TA_AGENT_API_URL")
+    if not endpoint:
+        raise IngestError("no market feed endpoint configured; set TA_AGENT_MARKET_API_URL in .env")
+    token = os.environ.get("TA_AGENT_MARKET_API_TOKEN") or os.environ.get("TA_AGENT_API_TOKEN")
+    override = _load_param_override("TA_AGENT_MARKET_API_PARAMS") or _load_param_override("TA_AGENT_API_PARAMS")
+    return _fetch_single_endpoint(
+        endpoint,
+        ticker=ticker,
+        start=start,
+        end=end,
+        token=token,
+        override_params=override,
+        extra_query={"timeframe": timeframe} if timeframe != "1D" else None,
+        timeout=timeout,
+    )
+
+
+def fetch_foreign_flow(
+    ticker: str,
+    start: str,
+    end: str,
+    *,
+    url: str | None = None,
+    timeout: float = 15.0,
+) -> list[dict]:
+    """Fetch foreign buy/sell flow and foreign room records from the foreign feed (Source 1)."""
+    endpoint = url or os.environ.get("TA_AGENT_FOREIGN_API_URL") or os.environ.get("TA_AGENT_API_URL")
+    if not endpoint:
+        raise IngestError("no foreign feed endpoint configured; set TA_AGENT_FOREIGN_API_URL in .env")
+    token = os.environ.get("TA_AGENT_FOREIGN_API_TOKEN") or os.environ.get("TA_AGENT_API_TOKEN")
+    override = _load_param_override("TA_AGENT_FOREIGN_API_PARAMS") or _load_param_override("TA_AGENT_API_PARAMS")
+    return _fetch_single_endpoint(
+        endpoint,
+        ticker=ticker,
+        start=start,
+        end=end,
+        token=token,
+        override_params=override,
+        timeout=timeout,
+    )
 
 
 def fetch_trading_statistics(
@@ -414,14 +474,16 @@ def _fetch_single_endpoint(
     end: str,
     token: str | None = None,
     override_params: dict | None = None,
+    extra_query: dict | None = None,
     timeout: float = 15.0,
 ) -> list[dict]:
     names = {"symbol": "symbol", "fromDate": "fromDate", "toDate": "toDate"}
     if override_params:
         names.update(override_params)
-    query = urllib.parse.urlencode(
-        {names["symbol"]: ticker.upper(), names["fromDate"]: start, names["toDate"]: end}
-    )
+    params = {names["symbol"]: ticker.upper(), names["fromDate"]: start, names["toDate"]: end}
+    if extra_query:
+        params.update(extra_query)
+    query = urllib.parse.urlencode(params)
     full_url = f"{url}{'&' if '?' in url else '?'}{query}"
     request = urllib.request.Request(full_url, headers={"Accept": "application/json"})
     if token:
