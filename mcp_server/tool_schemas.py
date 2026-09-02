@@ -143,7 +143,7 @@ class GetPriceDataInput(BaseModel):
 class ComputeIndicatorsInput(RowSource):
     """Input for `compute_indicators`."""
 
-    groups: list[GroupName] = Field(
+    groups: list[GroupName] | str = Field(
         default_factory=lambda: list(GROUPS),
         description=f"subset of: {', '.join(GROUPS)}",
     )
@@ -159,9 +159,30 @@ class ComputeIndicatorsInput(RowSource):
         default=10, ge=0, le=100, description="points of each series to return; 0 for none"
     )
 
-    @field_validator("groups")
+    @field_validator("groups", mode="before")
     @classmethod
-    def _known_groups(cls, value: list[str]) -> list[str]:
+    def _known_groups(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            v = value.strip()
+            if (v.startswith("[") and v.endswith("]")) or (v.startswith("(") and v.endswith(")")):
+                import ast
+                try:
+                    parsed = ast.literal_eval(v)
+                    if isinstance(parsed, (list, tuple)):
+                        v_list = [str(x).strip() for x in parsed]
+                    else:
+                        v_list = [str(parsed).strip()]
+                except Exception:
+                    v_clean = v.strip("[]()").replace('"', "").replace("'", "")
+                    v_list = [g.strip().strip("'\"") for g in v_clean.split(",") if g.strip().strip("'\"")]
+            else:
+                v_list = [g.strip().strip("'\"") for g in v.split(",") if g.strip().strip("'\"")]
+            value = v_list
+        elif isinstance(value, (tuple, set)):
+            value = list(value)
+        elif not isinstance(value, list):
+            value = [value]
+
         unknown = [g for g in value if g not in GROUPS]
         if unknown:
             raise ValueError(

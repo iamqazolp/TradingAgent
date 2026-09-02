@@ -246,7 +246,7 @@ def get_price_data(
 )
 def compute_indicators(
     rows: list[dict] | None = None,
-    groups: list[str] | None = None,
+    groups: list[str] | str | None = None,
     ticker: str | None = None,
     lookback_days: int = 300,
     params: dict | None = None,
