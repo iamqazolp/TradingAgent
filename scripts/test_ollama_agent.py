@@ -85,6 +85,7 @@ def call_ollama_chat(model: str, messages: list[dict], tools: list[dict] | None 
         "stream": False,
         "options": {
             "temperature": 0.1,
+            "num_ctx": 8192,
         },
     }
     if tools:

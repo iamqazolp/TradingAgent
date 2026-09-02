@@ -176,7 +176,7 @@ class ComputeIndicatorsInput(RowSource):
         ),
     )
     series_tail: int = Field(
-        default=10, ge=0, le=100, description="points of each series to return; 0 for none"
+        default=2, ge=0, le=100, description="points of each series to return; 0 for none"
     )
 
     @field_validator("groups", mode="before")

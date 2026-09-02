@@ -250,7 +250,7 @@ def compute_indicators(
     ticker: str | None = None,
     lookback_days: int = 300,
     params: dict | None = None,
-    series_tail: int = 10,
+    series_tail: int = 2,
     timeframe: str = "1D",
 ) -> dict:
     started = time.perf_counter()
