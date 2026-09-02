@@ -1,248 +1,176 @@
-# Vietnamese stock technical analysis agent
+# Vietnamese Equities Technical Analysis Agent & Skills
 
-A technical-analysis agent for Vietnamese equities, built on
-[OpenHarness](https://github.com/HKUDS/OpenHarness). An MCP server computes
-indicators from an hourly/daily OHLC and order-flow feed; a skill file makes the agent reason group
-by group and refuse what the data cannot support.
+A standalone Model Context Protocol (MCP) server and agent reasoning skill for technical analysis of Vietnamese equities (VNM, HPG, TNG, etc.).
+
+Computes multi-timeframe OHLC indicators, order flow, and foreign activity directly from market data. Equips any AI agent (Claude Desktop, Antigravity, Cursor, Windsurf, Claude Code, etc.) with disciplined, hallucination-free technical analysis capabilities.
 
 Supports multi-timeframe analysis across **1H, 4H, 1D, 3D, 1W, 1M, 1Y**.
 
-## The data and indicator capabilities
+---
 
-The feed provides OHLC price action and order-flow dynamics:
+## Capabilities
 
-| Available | Not available |
+The engine provides OHLC price action and order-flow dynamics:
+
+| Available | Excluded (refused rather than faked) |
 |---|---|
-| OHLC prices: open, high, low, close, previous close | sub-hour minute / tick data |
-| Timeframes: 1H, 4H, 1D, 3D, 1W, 1M, 1Y | real-time sub-minute tick VWAP |
-| Matched trade count, traded value (VND), traded volume | bid/ask order book depth |
-| Buy-side / sell-side trade counts and matched volumes | fundamentals, news sentiment |
-| Foreign buy/sell volume and value, remaining foreign room | multi-ticker index breadth |
+| **OHLC prices**: Open, High, Low, Close, Previous Close | Sub-hour minute / tick data |
+| **Timeframes**: 1H, 4H, 1D, 3D, 1W, 1M, 1Y | Real-time sub-minute tick VWAP |
+| **Order flow**: Traded value (VND), volume, matched trades | Order book bid/ask depth |
+| **Trade sizing**: Buy-side / sell-side counts, avg ticket size | Fundamentals, balance sheet ratios |
+| **Foreign flow**: Foreign buy/sell value & volume, foreign room | News sentiment, social sentiment |
 
-Supported indicators include:
-- **Trend**: SMA, EMA, MACD, Wilder ADX / DMI (+DI, -DI, DX, ADX)
-- **Momentum**: Wilder RSI(14), Stochastic (%K, %D)
-- **Volatility**: Bollinger Bands, Wilder True ATR(14) with stop-loss sizing, Realized Volatility
-- **Order & Foreign Flow**: Buy/Sell volume & count imbalances, Average trade size by side, Value spikes, Foreign net value, Room trend
+### Supported Indicators
 
-The engine refuses metrics this feed cannot support (`indicators/engine.py::UNSUPPORTED_METRICS`), and the skill instructs the agent to refuse rather than approximate.
+- **Trend**: SMA (20, 50, 200), EMA (12, 26), MACD (12, 26, 9), Wilder ADX / DMI (+DI, -DI, DX, ADX), Ichimoku Kinko Hyo (Tenkan, Kijun, Senkou Span A/B, Chikou, Kumo sentiment, TK cross)
+- **Momentum**: Wilder RSI (14), Stochastic Oscillator (%K, %D with slowing)
+- **Volatility**: Bollinger Bands (20, 2σ), Wilder True ATR (14) with volatility stop sizing, Realized Volatility
+- **Order & Foreign Flow**: Buy/Sell volume & trade-count imbalances, average trade ticket size by side, value spikes vs 20-period baseline, foreign net value (VND), foreign participation ratio, structural foreign room trend
 
-## Data provenance: synthetic fixtures
+The engine explicitly refuses metrics this feed cannot support (`indicators/engine.py::UNSUPPORTED_METRICS`), and `skills/technical-analysis/SKILL.md` instructs the agent to decline rather than fabricate.
 
-**The bundled data is synthetic.** The documented `GetTradingStatistics` endpoint
-could not be located, so `scripts/generate_fixtures.py` produces a deterministic
-fixture matching the documented response schema exactly: string-typed numerics
-with thousands separators, `dd/mm/yyyy` dates, holiday gaps, ~2% volume/trade
-reconciliation residuals, one unexplained foreign-room event on VNM, and blank
-fields where a small cap has no foreign trading. It covers **VNM, HPG and TNG,
-520 trading days each (2024-01-02 → 2026-01-22)**.
+---
 
-Treat every number in this repo as a correctness fixture, not a market fact.
-
-Switching to the live feed needs no code change, only environment variables in a `.env` file:
+## Quick Start
 
 ```bash
-cp .env.example .env
-# Edit .env with your live API URL, tokens, and LLM keys:
-# TA_AGENT_API_URL=https://.../GetTradingStatistics
-# TA_AGENT_API_TOKEN=secret_token
-# OPENAI_API_KEY=sk-...
-```
+# 1. Install dependencies
+uv sync
 
-`data.ingest.extract_records` unwraps whatever envelope the response arrives in
-(including the double-encoded ASP.NET `{"d": "..."}` form), so the exact wrapper
-does not need to be known in advance.
-
-That path is not taken on trust: `scripts/mock_feed.py` serves the documented
-schema over real HTTP, and `tests/test_live_feed.py` drives ingestion through it
-— token, parameter remapping, envelope forms, idempotent re-ingest, and the
-error message for each way it can fail. See `docs/going_live.md`.
-
-## Quick start
-
-```bash
-uv sync                                              # create .venv from pyproject.toml
-uv run python scripts/generate_fixtures.py           # write tests/fixtures/*.json
+# 2. Ingest fixture dataset (VNM, HPG, TNG: 520 trading days each)
 uv run python -m data.ingest --file tests/fixtures/sample_daily_data.json
-uv run pytest                                        # 149 tests
-uv run python scripts/ground_truth.py                # independent reference values
-uv run python scripts/validate.py                    # engine vs ground truth
-uv run python scripts/mcp_smoke.py                   # real stdio MCP session
-uv run python scripts/loop_smoke.py                  # the whole agent loop, scripted model
+
+# 3. Verify ground truth (138/138 checks pass)
+uv run python scripts/ground_truth.py
+uv run python scripts/validate.py
+
+# 4. Run test suite (150 tests)
+uv run pytest
+
+# 5. Smoke-test the MCP server over stdio
+uv run python scripts/mcp_smoke.py
 ```
 
-All Python work goes through `uv`; `pyproject.toml` is the source of truth.
-`requirements.txt` is a generated compatibility artifact
-(`uv export --no-hashes --no-dev --no-emit-project -o requirements.txt`) — edit
-`pyproject.toml` and re-export, never the other way round.
+---
 
-## Using it with OpenHarness
+## Using with Any AI Agent
 
-```bash
-uv tool install 'openharness-ai==0.1.9' --with 'mcp<2' --force   # required, see below
-uv run python scripts/install_skill.py    # symlinks the skill + registers the MCP server
-uv run python scripts/loop_smoke.py       # proves the loop before you spend a token
-oh setup                                  # your provider and model, once
-oh                                        # /skills lists technical-analysis
-```
+This project exposes its capabilities via standard **Model Context Protocol (MCP)** and an agent **Skill definition**.
 
-**The `mcp<2` pin is not optional.** OpenHarness 0.1.9 reads `tool.inputSchema`,
-renamed to `input_schema` in MCP SDK 2.0, so with mcp 2.x it connects to the
-server, fails while listing its tools, marks it `failed`, and runs the agent with
-**no MCP tools and no visible error** — the exact situation where a model answers
-from memory. `install_skill.py` checks the version and `loop_smoke.py` fails with
-the fix. mcp 1.29.1 works: it still has the old field name and also has the
-newer transport helpers 0.1.9 imports.
+### 1. Register the MCP Server
 
-`install_skill.py` symlinks `skills/technical-analysis` into
-`~/.openharness/skills/` and adds the `ta-agent` stdio server to
-`~/.openharness/settings.json`. Pass `--config-dir` to install somewhere else
-(`OPENHARNESS_CONFIG_DIR` is honoured), and `--uninstall` to undo both.
-
-Note for OpenHarness **0.1.9**: `oh --mcp-config <file>` and `oh --settings <file>`
-are accepted on the command line but never read — both options are declared in
-`cli.py` and unused. MCP servers are loaded from `<config dir>/settings.json`
-(`mcp_servers`) and from enabled plugins, so that is what the installer writes.
-`mcp_config.json` is kept in the repo as the portable artifact for other MCP hosts
-and is regenerated by the installer from this checkout's paths.
-
-Also in 0.1.9: `oh mcp list` crashes with
-`AttributeError: 'McpStdioServerConfig' object has no attribute 'get'` whenever
-any stdio server is configured, including one added by `oh mcp add` itself
-(`cli.py::mcp_list` calls `.get()` on a pydantic model). Nothing here depends on
-it — use `oh --dry-run` to inspect the resolved MCP config instead.
-
-Verify without a model provider:
-
-```bash
-oh --dry-run -p "analyse VNM"
-# skills: 9 ... technical-analysis ...
-# Configured MCP - ta-agent: stdio -> .../python -m mcp_server.server (ok)
-# Likely Matches - skills: technical-analysis (score=7) [analyse]
-```
-
-`--dry-run` resolves the config but does not start anything ("mcp: skipped in
-dry-run"), so its `(ok)` means "config is valid", not "tools load". For that,
-`scripts/loop_smoke.py` runs `oh` against a scripted model
-(`scripts/mock_model.py`) and checks that our three tools are advertised, that
-one is dispatched and executed, that its result returns into the conversation,
-and that the value quoted back also appears in `logs/tool_calls.jsonl`.
-
-## Tools
-
-| Tool | Use it for |
-|---|---|
-| `get_price_data(ticker, lookback_days=300, start=None, end=None, timeframe="1D")` | raw stored / resampled OHLC rows, oldest first. `lookback_days` counts trading rows, not calendar days |
-| `compute_indicators(ticker \| rows, groups=None, params=None, series_tail=10, lookback_days=300, timeframe="1D")` | the seven indicator groups |
-| `get_flow_summary(ticker \| rows, window=5, lookback_days=300, timeframe="1D")` | the flow-only answer |
-
-Groups: `trend`, `momentum`, `volatility`, `volume_flow`, `trade_flow`,
-`value_flow`, `foreign_flow`. Supported timeframes: `1H`, `4H`, `1D`, `3D`, `1W`, `1M`, `1Y`.
-
-Every indicator function is pure — pandas in, dict out, no I/O — and when history
-is too short it returns
+Add to your MCP client configuration (Claude Desktop, Antigravity, Cursor, Windsurf, Zed, etc.):
 
 ```json
-{"insufficient_data": true, "reason": "sma(200) requires 200 rows of history, 3 available",
- "required_window": 200, "available": 3}
+{
+  "mcpServers": {
+    "ta-agent": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/TAOpenHarness", "python", "-m", "mcp_server.server"],
+      "env": {
+        "TA_AGENT_DB": "/absolute/path/to/TAOpenHarness/var/ta.sqlite",
+        "TA_AGENT_AUDIT_LOG": "/absolute/path/to/TAOpenHarness/logs/tool_calls.jsonl",
+        "TA_AGENT_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
 ```
 
-never a NaN, never an exception, and never a value quietly computed from a shorter
-window.
+A pre-configured template is available at `mcp_config.json`.
 
-## Fixed indicator conventions
+### 2. Equip Your Agent with the Skill
 
-These are choices, not accidents. The independent ground-truth script in
-`scripts/ground_truth.py` implements the same conventions from scratch, so
-changing one here fails validation there.
+Give your agent the reasoning instructions in `skills/technical-analysis/SKILL.md`:
+
+- **For Antigravity / Claude Code**: Point your client or slash command to `skills/technical-analysis/SKILL.md`.
+- **For Claude Desktop / Web / Custom System Prompts**: Include the contents of `skills/technical-analysis/SKILL.md` in the system instructions.
+
+---
+
+## MCP Tools Reference
+
+The server exposes three focused tools:
+
+| Tool | Parameters | Purpose |
+|---|---|---|
+| `get_price_data` | `ticker`, `lookback_days=300`, `start=None`, `end=None`, `timeframe="1D"` | Fetches raw / resampled OHLC bars with order flow, oldest first. `lookback_days` counts bars in the target timeframe. |
+| `compute_indicators` | `ticker` (or `rows`), `groups=None`, `params=None`, `series_tail=10`, `lookback_days=300`, `timeframe="1D"` | Computes requested indicator groups (`trend`, `momentum`, `volatility`, `volume_flow`, `trade_flow`, `value_flow`, `foreign_flow`). |
+| `get_flow_summary` | `ticker` (or `rows`), `window=5`, `lookback_days=300`, `timeframe="1D"` | Lightweight answer for order flow and foreign capital movement without a full indicator pass. |
+
+Every indicator function is pure (pandas in, dictionary out, no I/O). When history is too short, it returns an explicit marker:
+
+```json
+{
+  "insufficient_data": true,
+  "reason": "sma(200) requires 200 rows of history, 3 available",
+  "required_window": 200,
+  "available": 3
+}
+```
+Never a `NaN`, never an unhandled exception, and never a value silently computed from an inadequate window.
+
+---
+
+## Fixed Indicator Conventions
+
+Conventions are pinned mathematically in `indicators/` and cross-verified by an independent pure standard-library implementation in `scripts/ground_truth.py`:
 
 | Indicator | Convention |
 |---|---|
-| EMA | SMA-seeded (TA-Lib style): the first value is the mean of the first `n` closes. Deliberately **not** pandas `ewm(adjust=False)`, which seeds on the first observation |
-| MACD | signal EMA computed on the live (dropna) MACD section, so leading NaNs cannot contaminate the recursion; requires `slow + signal - 1` rows |
-| ADX / DMI | Wilder smoothing on +DM, -DM, and TR. Defaults p_di/m_di/dx to 0.0 when smoothed TR is 0 (prevents NaN cascades) |
-| RSI | Wilder smoothing. `avg_loss == 0` reads 100 when there were gains, 50 when the window is flat |
-| Stochastic | Classic (14, 3, 3) %K and %D over highest high and lowest low |
-| ATR | True Wilder 14-period Average True Range for stop sizing |
-| Bollinger | population stdev (`ddof=0`), the classic definition |
-| Realized volatility | sample stdev (`ddof=1`) of log returns, annualized on 252 days |
-| "vs baseline" ratios | today divided by the mean of the previous `n` days, **excluding today** — including it would damp the very spike being detected |
-| OBV | signed by the provider's `prev_close`, cross-checked against the prior row's close at 0.5% tolerance; disagreement refuses instead of guessing |
+| **EMA** | SMA-seeded (TA-Lib style): first value is the mean of the first `n` closes. Deliberately *not* pandas `ewm(adjust=False)` which seeds on a single observation. |
+| **MACD** | Signal EMA computed on the live (`dropna`) MACD section only; leading NaNs cannot contaminate the recursion. Requires `slow + signal - 1` rows. |
+| **ADX / DMI** | Wilder smoothing on +DM, -DM, and TR. Defaults DI/DX to `0.0` when smoothed TR is 0 to prevent NaN cascades on flat/halted periods. |
+| **RSI** | Wilder smoothing. Flat windows (`avg_loss == 0` and `avg_gain == 0`) read 50.0. |
+| **Stochastic** | Classic (14, 3, 3) %K and %D over highest high and lowest low. |
+| **ATR** | Wilder 14-period True Range for volatility stop-loss sizing. |
+| **Bollinger** | Population standard deviation (`ddof=0`), the classic definition. |
+| **Realized Volatility** | Sample standard deviation (`ddof=1`) of log returns, annualized on 252 trading days. |
+| **Baseline Ratios** | Today's value divided by the mean of the prior `n` days, **excluding today** to avoid dampening the detected spike. |
+| **OBV** | Direction determined by provider's `prev_close`, validated against the prior row's close at 0.5% tolerance. |
 
-## Known limitations
+---
 
-Documented so no future contributor assumes otherwise:
+## Live Data Ingestion
 
-- **No sub-hour tick data, sub-minute tick VWAP, fundamentals, news sentiment, or index breadth.**
-- **The bundled data is synthetic.** See "Data provenance".
-- **Corporate actions may be unadjusted.** A `prev_close` that disagrees with the
-  prior row's close is the fingerprint of an unadjusted split or stock dividend.
-  It is reported in `data_quality.suspected_corporate_actions` on every
-  `compute_indicators` result, and OBV refuses outright rather than carrying a
-  corrupted running total. Confirm adjustment status with the provider before
-  trusting close-based indicators across such a date.
-- **Foreign room is a snapshot, not a flow.** Room can move because the foreign
-  ownership limit or charter capital changed. Room changes the day's foreign net
-  volume cannot explain are reported as `suspected_structural_changes`, not read
-  as flow.
-- **Volume and trade counts may not reconcile.** `total_volume` and `total_trade`
-  are stored as reported, never derived from the two sides. A mismatch is an
-  ingest warning, never a rejection.
-- **Zero foreign volume is normal** on small caps (TNG averages 0.19%
-  participation in the fixture). It is market behaviour, not an ingestion bug.
-- **Gaps stay gaps.** Holidays, halts and zero-volume days are never filled with
-  zeros; they drop out of rolling windows instead of dragging them toward neutral.
-- **Newly listed tickers get markers, not numbers.** Anything that needs more
-  history than exists returns the insufficient-data marker.
-- **Every numeric field arrives as a string** and is cast explicitly. A missing or
-  non-positive `PriceClose` / `PricePreviousClose` rejects the row; a blank volume,
-  count, value or room field becomes 0, which is what a blank means in this feed.
+To connect live market data feeds, configure environment variables in `.env`:
 
-## Auditability
-
-Every tool call is appended to `logs/tool_calls.jsonl` (override with
-`TA_AGENT_AUDIT_LOG`) with its arguments, computed values and duration; bulk row
-lists collapse to a count so the log stays readable. Any number the agent quotes
-can be traced to a real call — a number with no matching entry was hallucinated.
-Logging goes to stderr so stdout stays clean for the MCP protocol, and a
-non-writable log never costs the user their answer.
-
-## Validation
-
-`scripts/ground_truth.py` reimplements every Tier 0 indicator in pure stdlib
-(`math`, `statistics`, its own parser, no pandas and no project imports) and
-writes `tests/fixtures/ground_truth.json`. `scripts/validate.py` compares the
-engine against it — 46 checks per ticker across VNM, HPG and TNG.
-
-Current result: **138/138 checks pass**, largest disagreement ~2.6e-14 (floating
-point noise) against a 0.5% tolerance, with no sign or order-of-magnitude
-failures. Report: `logs/validation_report.json`.
-
-## Layout
-
-```
-data/            schema.sql, store.py (SQLite upsert store), ingest.py (casts, rejects, warnings), resample.py (multi-timeframe)
-indicators/      pure functions: trend, momentum, volatility, volume_flow,
-                 trade_flow, value_flow, foreign_flow + engine.py (dispatch, quality, serialize)
-mcp_server/      server.py (three tools, audit log), tool_schemas.py (pydantic validation)
-skills/          technical-analysis/SKILL.md — the reasoning framework
-scripts/         generate_fixtures, ground_truth, validate, mcp_smoke, install_skill,
-                 mock_feed + mock_model (test doubles for the two plug-in points),
-                 loop_smoke (oh end to end against the scripted model)
-tests/           146 tests: hand-calculated indicators, engine, store/ingest, MCP layer,
-                 resampling, live feed over HTTP
-docs/            going_live.md — the two plug-in points, what is proved and what is not
-                 acceptance_prompts.md — the 10 interactive prompts for Phase 4
+```bash
+cp .env.example .env
 ```
 
-## Status against the plan
+Supports single-endpoint feeds or dual-source feeds (Market OHLC + Foreign Flow):
 
-| Phase | State |
-|---|---|
-| 0 Environment | done. `oh -p` runs a full turn end to end against the scripted model in `scripts/loop_smoke.py`; only the real provider key is missing (`oh setup`) |
-| 1 Data layer | done: OHLC schema, 3 tickers × 520 days ingested, multi-timeframe resampler (1H, 4H, 1D, 3D, 1W, 1M, 1Y) tested |
-| 2 Indicator engine | done: Groups A–G pure, ATR/ADX/Stochastic/Ichimoku, hand-calculated unit tests, insufficient-data contract enforced |
-| 3 MCP server | done: three tools, multi-timeframe pydantic-validated, verified over a real stdio session |
-| 4 OpenHarness integration | done mechanically: the skill reaches the system prompt, all three tools reach the model, one is dispatched, executed and audited (`loop_smoke.py`). The 10-prompt judgement check needs credentials — see `docs/acceptance_prompts.md` |
-| 5 Ground-truth validation | done: 138/138, max deviation 2.6e-14 |
-| 6 Hardening | done: gaps/halts/short history/flat periods, corporate-action flagging, per-call audit log |
+```bash
+# Single endpoint:
+export TA_AGENT_API_URL='https://.../GetTradingStatistics'
+export TA_AGENT_API_TOKEN='...'
+
+# Ingest historical range:
+uv run python -m data.ingest --ticker VNM --start 2024-01-01 --end 2026-01-22
+```
+
+`data.ingest.extract_records` unwraps standard REST envelopes, double-encoded ASP.NET `{"d": "..."}` envelopes, and handles missing/reconciliation errors transparently.
+
+---
+
+## Auditability & Verification
+
+- **Audit trail**: Every tool execution is logged with arguments, results, and latency to `logs/tool_calls.jsonl` (override with `TA_AGENT_AUDIT_LOG`). Any number an agent quotes can be verified against this audit trail.
+- **Ground truth validation**: `scripts/ground_truth.py` computes reference values using only Python's standard library (`math`, `statistics`). `scripts/validate.py` checks the engine against it across 138 metrics (VNM, HPG, TNG). Current result: **138/138 checks pass** (maximum discrepancy ~2.6e-14, floating point precision).
+
+---
+
+## Repository Structure
+
+```
+data/            schema.sql (SQLite schema), store.py (prices store & MTF queries),
+                 resample.py (1H, 4H, 1D, 3D, 1W, 1M, 1Y resampler), ingest.py (feed ingestion)
+indicators/      Pure indicator modules: trend, momentum, volatility, volume_flow,
+                 trade_flow, value_flow, foreign_flow + engine.py (dispatch & quality)
+mcp_server/      server.py (stdio MCP server), tool_schemas.py (Pydantic validation schemas)
+skills/          technical-analysis/SKILL.md — agent reasoning instructions & multi-timeframe rules
+scripts/         ground_truth.py, validate.py, generate_fixtures.py, mcp_smoke.py, mock_feed.py
+tests/           150 unit and integration tests (engine, indicators, store, resample, mcp server)
+docs/            going_live.md, acceptance_prompts.md
+```

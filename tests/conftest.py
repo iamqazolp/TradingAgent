@@ -119,3 +119,21 @@ def edge_case_payload():
 def sample_payload():
     """The generated multi-ticker fixture, envelope and all."""
     return _fixture_payload("sample_daily_data.json")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env_from_local_dotenv(monkeypatch):
+    """Ensure local .env variables do not contaminate unit tests."""
+    for var in (
+        "TA_AGENT_MARKET_API_URL",
+        "TA_AGENT_MARKET_API_TOKEN",
+        "TA_AGENT_MARKET_API_PARAMS",
+        "TA_AGENT_FOREIGN_API_URL",
+        "TA_AGENT_FOREIGN_API_TOKEN",
+        "TA_AGENT_FOREIGN_API_PARAMS",
+        "TA_AGENT_API_URL",
+        "TA_AGENT_API_TOKEN",
+        "TA_AGENT_API_PARAMS",
+    ):
+        monkeypatch.delenv(var, raising=False)
+

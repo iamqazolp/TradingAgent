@@ -1,7 +1,7 @@
 [project]
 name = "ta-agent"
-version = "0.1.0"
-description = "Technical-analysis agent for Vietnamese stocks, on OpenHarness"
+version = "0.2.0"
+description = "Technical analysis skills and MCP server for Vietnamese equities"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

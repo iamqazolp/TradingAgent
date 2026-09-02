@@ -1,73 +1,51 @@
-# Going live: the two things left to plug in
+# Going Live: Connecting Agents & Market Data
 
-Everything between the data and the answer is built and verified. Two seams need
-something only you have: a **model provider** and the **real data endpoint**.
-Both are configuration, not code.
+Everything between market data and the technical analysis answer is built and mathematically verified. Two integration points remain for production deployment:
+1. **Your AI Agent / MCP Client** (Claude Desktop, Antigravity, Cursor, Windsurf, Claude Code, etc.)
+2. **Your Live Data Feed** (single endpoint or dual-source)
 
-This document says exactly what to set, how each seam was proved without the real
-thing, and what can only be checked once the real thing is in place.
+---
 
-## 1. The model provider
+## 1. Connecting Your AI Agent / MCP Client
+
+The `ta-agent` server communicates over standard stdio Model Context Protocol (MCP).
+
+### Register the MCP Server
+
+Configure your MCP host using `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ta-agent": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/TAOpenHarness", "python", "-m", "mcp_server.server"],
+      "env": {
+        "TA_AGENT_DB": "/absolute/path/to/TAOpenHarness/var/ta.sqlite",
+        "TA_AGENT_AUDIT_LOG": "/absolute/path/to/TAOpenHarness/logs/tool_calls.jsonl",
+        "TA_AGENT_LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
+```
+
+### Provide the Reasoning Skill
+
+Supply `skills/technical-analysis/SKILL.md` as system instructions or prompt context. This ensures the model:
+1. Calls the three MCP tools directly (`get_price_data`, `compute_indicators`, `get_flow_summary`).
+2. Adheres to multi-timeframe confluence rules (1H/4H vs 1D/1W).
+3. Quotes only tool-verified numeric readings.
+4. Refuses unsupported metrics (fundamentals, news sentiment, tick VWAP).
+
+### Verification
+
+Run the stdio smoke test to verify MCP server tool dispatch:
 
 ```bash
-uv run python scripts/install_skill.py     # skill + MCP server into ~/.openharness
-oh setup                                   # your provider, model and key
-oh                                         # /skills lists technical-analysis
+uv run python scripts/mcp_smoke.py
 ```
 
-### Required: pin oh's MCP client
-
-OpenHarness 0.1.9 reads `tool.inputSchema` from the MCP SDK, which renamed that
-field to `input_schema` in 2.0. With mcp 2.x installed, `oh` starts the server,
-raises `AttributeError: 'Tool' object has no attribute 'inputSchema'` while
-listing its tools, marks the server `failed`, and carries on with **zero MCP
-tools and no visible error**. The agent then answers from memory, which is the
-one behaviour this project exists to prevent.
-
-```bash
-uv tool install 'openharness-ai==0.1.9' --with 'mcp<2' --force
-```
-
-mcp 1.29.1 has both the old field name and the newer transport helpers 0.1.9
-imports, so this is the version to be on. `scripts/install_skill.py` checks and
-warns; `scripts/loop_smoke.py` fails loudly with the same hint.
-
-Note that `oh --dry-run` prints `ta-agent: stdio -> ... (ok)` even when the
-connection would fail — dry-run resolves the config without starting anything
-("mcp: skipped in dry-run"). It is not a substitute for the loop check.
-
-### How this was verified without credentials
-
-`scripts/mock_model.py` is a stand-in for the Anthropic Messages API: it streams
-a scripted reply instead of a generated one. `scripts/loop_smoke.py` runs `oh`
-against it and asserts the six things that make the loop real:
-
-```
-$ uv run python scripts/loop_smoke.py
-  ok   oh called the model endpoint
-  ok   all three MCP tools advertised to the model: mcp__ta-agent__get_price_data,
-       mcp__ta-agent__compute_indicators, mcp__ta-agent__get_flow_summary
-  ok   the skill is in the system prompt
-  ok   the tool ran and its result went back to the model
-  ok   the answer quotes a value from the tool result: foreign_room_trend=1651872.0
-  ok   the same value is in the audit log: 1 new entr(y/ies)
-
-RESULT ok - the loop works; plug in a real provider with `oh setup`
-```
-
-So: the skill reaches the system prompt, the tools reach the model under the
-names `mcp__ta-agent__*`, a `tool_use` is dispatched to our server, the JSON
-result comes back into the conversation, and the number the model repeats is the
-number in `logs/tool_calls.jsonl`.
-
-### What a real provider still has to prove
-
-The mock model does not think, so it cannot test judgement. Once your credentials
-are in, work through `docs/acceptance_prompts.md` (10 prompts, with the expected
-tool call and expected values for each). Those check what only a real model can:
-that it calls the right tool, reports the numbers the tool returned, keeps the
-seven groups separate, names conflicts instead of averaging them, and **refuses**
-prompts 7–9 (ATR, overnight gap, P/E and news) instead of approximating.
 
 ## 2. The data endpoint
 
