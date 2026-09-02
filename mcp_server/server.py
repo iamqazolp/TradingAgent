@@ -245,7 +245,7 @@ def get_price_data(
     )
 )
 def compute_indicators(
-    rows: list[dict] | None = None,
+    rows: list[dict] | str | None = None,
     groups: list[str] | str | None = None,
     ticker: str | None = None,
     lookback_days: int = 300,
@@ -309,7 +309,7 @@ def compute_indicators(
     )
 )
 def get_flow_summary(
-    rows: list[dict] | None = None,
+    rows: list[dict] | str | None = None,
     window: int = 5,
     ticker: str | None = None,
     lookback_days: int = 300,

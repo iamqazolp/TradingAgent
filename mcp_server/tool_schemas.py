@@ -79,10 +79,30 @@ class RowSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    rows: list[PriceRow] | None = None
+    rows: list[PriceRow] | str | None = None
     ticker: Ticker | None = None
     lookback_days: int = Field(default=300, ge=2, le=5000)
     timeframe: Timeframe = Field(default="1D", description="timeframe: 1H, 4H, 1D, 3D, 1W, 1M, 1Y")
+
+    @field_validator("rows", mode="before")
+    @classmethod
+    def _normalize_rows(cls, value: Any) -> list[PriceRow] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ("none", "null", "[]", "''", '""', ""):
+                return None
+            try:
+                import json
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed if len(parsed) > 0 else None
+            except Exception:
+                return None
+        if isinstance(value, list) and len(value) == 0:
+            return None
+        return value
 
     @field_validator("timeframe", mode="before")
     @classmethod
