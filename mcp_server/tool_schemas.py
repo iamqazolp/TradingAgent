@@ -66,9 +66,30 @@ class RowSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    rows: list[PriceRow] | None = None
+    rows: list[PriceRow] | str | None = None
     ticker: Ticker | None = None
     lookback_days: int = Field(default=300, ge=2, le=5000)
+
+    @field_validator("rows", mode="before")
+    @classmethod
+    def _normalize_rows(cls, value: Any) -> list[PriceRow] | None:
+        """Normalize stringified None/null/empty from local LLMs (Ollama etc.)."""
+        if value is None:
+            return None
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in ("none", "null", "[]", "''", '""', ""):
+                return None
+            try:
+                import json
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed if len(parsed) > 0 else None
+            except Exception:
+                return None
+        if isinstance(value, list) and len(value) == 0:
+            return None
+        return value
 
     @model_validator(mode="after")
     def _one_source(self):
