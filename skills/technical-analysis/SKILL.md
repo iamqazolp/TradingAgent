@@ -71,8 +71,11 @@ tin tức.**
 
 ### Đọc kết quả tool
 
-- `{"insufficient_data": true, "reason": ..., "required_window": n}`: lịch sử quá
+- `{\"insufficient_data\": true, \"reason\": ..., \"required_window\": n}`: lịch sử quá
   ngắn. Nói rõ, trích dẫn lý do, KHÔNG thay bằng cửa sổ ngắn hơn hay proxy.
+- `price_change_pct` và `price_limit_flag`: có sẵn ở top-level output của
+  `compute_indicators`. Nếu `price_limit_flag` = `"near_ceiling"` hoặc `"near_floor"`,
+  **bắt buộc** đề cập trong phân tích (gần giá trần/sàn HOSE ±7%).
 - `data_quality.warnings`: đi kèm mọi kết quả `compute_indicators`. Nếu báo corporate
   action nghi ngờ — nói rằng các chỉ báo close-based qua ngày đó bị méo, TRƯỚC khi
   diễn giải.
@@ -88,10 +91,10 @@ tin tức.**
 chặt chẽ. Ngược lại = downtrend. Bất kỳ sắp xếp nào khác = chuyển tiếp — và
 "chuyển tiếp" là câu trả lời hoàn toàn hợp lệ.
 
-**Cách đánh giá SMA rising/falling:** So sánh giá trị SMA hiện tại với giá trị 5 phiên
-trước trong series. Nếu tăng đều → rising, giảm đều → falling, lằng nhằng → flat.
-Đây là thông tin quan trọng — SMA20 = 85,000 nhưng đang falling hoàn toàn khác với
-SMA20 = 85,000 đang rising.
+**Cách đánh giá SMA rising/falling:** Mỗi SMA giờ trả về trường `direction` =
+`"rising"`, `"falling"`, hoặc `"flat"` (so sánh tự động với 5 phiên trước). Dùng
+trực tiếp. Đây là thông tin quan trọng — SMA20 = 85,000 đang falling hoàn toàn khác
+với SMA20 = 85,000 đang rising.
 
 **MACD:** Histogram sign và trường `crossover` quan trọng hơn giá trị tuyệt đối MACD
 (vì scale theo giá). Bullish/bearish cross mới xảy ra là tín hiệu mạnh nhất.
@@ -118,11 +121,14 @@ cờ `"is_atr_substitute": true`. Gọi đúng tên "biến động thực tế 
 BAO GIỜ gọi là ATR. `suggested_stop_distance_pct` = 2x biến động ngày — trình bày
 như điểm khởi đầu từ biến động thực tế, không phải ATR stop.
 
-### Dòng khối lượng (Volume Flow) — Imbalance, OBV
+### Dòng khối lượng (Volume Flow) — Imbalance, OBV, Volume Ratio
 
 **Imbalance:** -1 đến +1. Đọc giá trị trung bình cuộn (rolling average), không đọc
 ngày đơn lẻ. **OBV:** Xác nhận hoặc phản bác giá — giá tăng mà OBV đi ngang/giảm =
-cảnh báo về chất lượng đợt tăng.
+cảnh báo về chất lượng đợt tăng. **Volume ratio:** `volume_ratio_20` so khối lượng hôm
+nay với trung bình 20 phiên, kèm `flag` (`very_high` ≥ 2x, `elevated` ≥ 1.5x,
+`normal`, `low` ≤ 0.7x, `very_low` ≤ 0.5x). Dùng để xác nhận breakout hoặc phát hiện
+phiên giao dịch yên ắng bất thường.
 
 ### Dòng lệnh (Trade Flow) — Count Imbalance, Average Trade Size
 
@@ -261,7 +267,8 @@ Xu hướng: <nhận định> — SMA20 <v> [rising/falling], SMA50 <v>, SMA200 
 Động lượng: <nhận định> — RSI14 <v> [vùng], [phân kỳ nếu phát hiện]
 Biến động: <nhận định> — Bollinger %b <v>, width <v> [squeeze/mở rộng];
            Biến động c2c <v>%/ngày, khoảng stop gợi ý <v>%
-Dòng tiền: <nhận định> — Volume imbalance 5d <v>, OBV <xu hướng>
+Dòng tiền: <nhận định> — Volume imbalance 5d <v>, OBV <xu hướng>,
+           Volume ratio <v>x [flag]
 Dòng lệnh: <nhận định> — Count imbalance <v>, buy ticket ratio <v>x
 Giá trị:  <nhận định> — Avg ticket <v> VND, value spike <v>x
 Khối ngoại: <nhận định> — Net value 5d <v> VND, participation <v>%,
