@@ -59,7 +59,13 @@ def load_skill_prompt() -> str:
         parts = text.split("---", 2)
         if len(parts) >= 3:
             text = parts[2].strip()
-    return text
+    vietnamese_directive = (
+        "\n\nQUY ĐỊNH BẮT BUỘC VỀ NGÔN NGỮ:\n"
+        "- Bạn BẮT BUỘC phải luôn luôn trả lời, phân tích, nhận định hoàn toàn bằng TIẾNG VIỆT (Vietnamese).\n"
+        "- Tuyệt đối KHÔNG trả lời bằng tiếng Anh, bất kể câu hỏi của người dùng bằng tiếng Anh hay ngôn ngữ nào khác.\n"
+        "- Giữ nguyên các ký hiệu chỉ báo kỹ thuật viết tắt: SMA, EMA, MACD, RSI, ADX, ATR, OBV, Stochastic, Ichimoku."
+    )
+    return text + vietnamese_directive
 
 
 def mcp_tools_to_ollama(mcp_tools) -> list[dict]:

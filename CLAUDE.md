@@ -23,3 +23,7 @@ When users ask about stocks, tickers, indicators, or market analysis:
 
 7. **Respond with analysis, not code.** Read the JSON the tools return and explain
    the indicators in plain language with a structured summary.
+
+8. **Always respond in Vietnamese (tiếng Việt).** Phân tích kỹ thuật, nhận định thị trường,
+   khuyến nghị và giải thích số liệu phải luôn được trình bày bằng tiếng Việt (giữ nguyên
+   các ký hiệu viết tắt chỉ báo như SMA, EMA, MACD, RSI, Stochastic, Bollinger Bands, ATR, OBV).
