@@ -31,12 +31,25 @@ def ema_series(close: pd.Series, n: int) -> pd.Series:
 
 
 def sma(close: pd.Series, n: int = 20) -> dict:
-    """Rolling mean of close over `n` rows."""
+    """Rolling mean of close over `n` rows, with direction."""
     marker = require(close, n, f"sma({n})")
     if marker:
         return marker
     series = pd.to_numeric(close, errors="coerce").rolling(n).mean()
-    return {"window": n, "latest": latest(series), "series": series}
+    current = latest(series)
+    slope_lookback = min(5, len(series) - n)
+    direction = "unknown"
+    if slope_lookback > 0 and current is not None:
+        prior = finite(series.iloc[-1 - slope_lookback])
+        if prior is not None and prior != 0:
+            pct_change = (current - prior) / prior
+            if pct_change > 0.001:
+                direction = "rising"
+            elif pct_change < -0.001:
+                direction = "falling"
+            else:
+                direction = "flat"
+    return {"window": n, "latest": current, "direction": direction, "series": series}
 
 
 def ema(close: pd.Series, n: int = 20) -> dict:

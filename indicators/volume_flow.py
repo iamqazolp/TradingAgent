@@ -146,11 +146,45 @@ def _bias(value: float | None) -> str:
     return "balanced"
 
 
+def volume_ratio(df: pd.DataFrame, window: int = 20) -> dict:
+    """Today's total_volume relative to its `window`-day simple moving average.
+
+    A ratio of 1.8 means today's volume is 80% above the 20-day average.
+    Useful for confirming breakouts and flagging abnormally quiet sessions.
+    """
+    marker = require(df.index.to_series(), window + 1, f"volume_ratio({window})")
+    if marker:
+        return marker
+    vol = pd.to_numeric(df["total_volume"], errors="coerce").astype("float64")
+    vol_sma = vol.shift(1).rolling(window, min_periods=window).mean()
+    ratio = safe_series_div(vol, vol_sma).rename(f"volume_ratio_{window}")
+    ratio_now = latest(ratio)
+    flag = "normal"
+    if ratio_now is not None:
+        if ratio_now >= 2.0:
+            flag = "very_high"
+        elif ratio_now >= 1.5:
+            flag = "elevated"
+        elif ratio_now <= 0.5:
+            flag = "very_low"
+        elif ratio_now <= 0.7:
+            flag = "low"
+    return {
+        "window": window,
+        "latest": ratio_now,
+        "flag": flag,
+        "series": ratio,
+    }
+
+
 def volume_flow_group(df: pd.DataFrame, params: dict | None = None) -> dict:
     """Every Group D indicator, keyed by name."""
     params = params or {}
     window = params.get("flow_window", 5)
+    vol_window = params.get("volume_ratio_window", 20)
     return {
         f"buy_sell_volume_imbalance_{window}": buy_sell_volume_imbalance(df, window),
         "obv": obv(df, params.get("prev_close_tolerance", PREV_CLOSE_TOLERANCE)),
+        f"volume_ratio_{vol_window}": volume_ratio(df, vol_window),
     }
+

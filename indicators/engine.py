@@ -168,10 +168,23 @@ def compute(
         else:
             results[group] = _FRAME_GROUPS[group](frame, params)
 
+    latest_close = finite(close.iloc[-1])
+    latest_prev_close = finite(frame["prev_close"].iloc[-1])
+    price_change_pct = None
+    price_limit_flag = None
+    if latest_close is not None and latest_prev_close is not None and latest_prev_close > 0:
+        price_change_pct = round((latest_close - latest_prev_close) / latest_prev_close * 100, 2)
+        abs_pct = abs(price_change_pct)
+        if abs_pct >= 6.5:
+            price_limit_flag = "near_ceiling" if price_change_pct > 0 else "near_floor"
+
     return {
         "rows_used": int(len(frame)),
         "date_range": {"start": str(frame.index[0]), "end": str(frame.index[-1])},
-        "latest_close": finite(close.iloc[-1]),
+        "latest_close": latest_close,
+        "latest_prev_close": latest_prev_close,
+        "price_change_pct": price_change_pct,
+        "price_limit_flag": price_limit_flag,
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
     }
