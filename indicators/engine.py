@@ -177,6 +177,35 @@ def compute(
         abs_pct = abs(price_change_pct)
         if abs_pct >= 6.5:
             price_limit_flag = "near_ceiling" if price_change_pct > 0 else "near_floor"
+    # Pre-compute trend alignment so the LLM doesn't have to reason about it
+    trend_alignment = None
+    if "trend" in results and latest_close is not None:
+        trend = results["trend"]
+        sma_values = {}
+        for key in ("sma_20", "sma_50", "sma_200"):
+            val = trend.get(key, {})
+            if not is_insufficient(val):
+                sma_values[key] = val.get("latest")
+        if len(sma_values) >= 2:
+            s20 = sma_values.get("sma_20")
+            s50 = sma_values.get("sma_50")
+            s200 = sma_values.get("sma_200")
+            if s20 and s50 and s200:
+                if latest_close > s20 > s50 > s200:
+                    trend_alignment = "aligned_uptrend"
+                elif latest_close < s20 < s50 < s200:
+                    trend_alignment = "aligned_downtrend"
+                elif latest_close > s200:
+                    trend_alignment = "above_sma200_transitional"
+                else:
+                    trend_alignment = "below_sma200_transitional"
+            elif s20 and s50:
+                if latest_close > s20 > s50:
+                    trend_alignment = "short_term_uptrend"
+                elif latest_close < s20 < s50:
+                    trend_alignment = "short_term_downtrend"
+                else:
+                    trend_alignment = "transitional"
 
     return {
         "rows_used": int(len(frame)),
@@ -185,6 +214,7 @@ def compute(
         "latest_prev_close": latest_prev_close,
         "price_change_pct": price_change_pct,
         "price_limit_flag": price_limit_flag,
+        "trend_alignment": trend_alignment,
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
     }
