@@ -33,6 +33,7 @@ from mcp import ClientSession  # noqa: E402
 from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 
 DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_NUM_CTX = 16384
 OLLAMA_API_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
@@ -77,14 +78,21 @@ def mcp_tools_to_ollama(mcp_tools) -> list[dict]:
     return ollama_tools
 
 
-def call_ollama_chat(model: str, messages: list[dict], tools: list[dict] | None = None) -> dict:
+def call_ollama_chat(
+    model: str,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+    num_ctx: int = DEFAULT_NUM_CTX,
+    temperature: float = 0.0,
+) -> dict:
     url = f"{OLLAMA_API_URL}/api/chat"
     payload: dict = {
         "model": model,
         "messages": messages,
         "stream": False,
         "options": {
-            "temperature": 0.1,
+            "temperature": temperature,
+            "num_ctx": num_ctx,
         },
     }
     if tools:
@@ -98,7 +106,7 @@ def call_ollama_chat(model: str, messages: list[dict], tools: list[dict] | None 
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=300) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.URLError as e:
         print(f"\n[ERROR] Failed to connect to Ollama at {url}: {e}", file=sys.stderr)
@@ -106,7 +114,15 @@ def call_ollama_chat(model: str, messages: list[dict], tools: list[dict] | None 
         sys.exit(1)
 
 
-async def execute_agent_turn(session: ClientSession, model: str, system_prompt: str, user_prompt: str, tools: list[dict]) -> str:
+async def execute_agent_turn(
+    session: ClientSession,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tools: list[dict],
+    num_ctx: int = DEFAULT_NUM_CTX,
+    temperature: float = 0.0,
+) -> str:
     print(f"\n{'='*70}")
     print(f"User Prompt: {user_prompt}")
     print(f"{'='*70}")
@@ -121,8 +137,8 @@ async def execute_agent_turn(session: ClientSession, model: str, system_prompt: 
 
     while step < max_steps:
         step += 1
-        print(f"\n[Step {step}] Sending request to {model}...")
-        response = call_ollama_chat(model, messages, tools)
+        print(f"\n[Step {step}] Sending request to {model} (num_ctx={num_ctx}, temp={temperature})...")
+        response = call_ollama_chat(model, messages, tools, num_ctx=num_ctx, temperature=temperature)
         msg = response.get("message", {})
         messages.append(msg)
 
@@ -166,8 +182,14 @@ async def execute_agent_turn(session: ClientSession, model: str, system_prompt: 
     return ""
 
 
-async def run_suite(model: str, custom_prompt: str | None = None, interactive: bool = False):
-    print(f"Starting ta-agent MCP server connection for model '{model}'...")
+async def run_suite(
+    model: str,
+    custom_prompt: str | None = None,
+    interactive: bool = False,
+    num_ctx: int = DEFAULT_NUM_CTX,
+    temperature: float = 0.0,
+):
+    print(f"Starting ta-agent MCP server connection for model '{model}' (num_ctx: {num_ctx}, temp: {temperature})...")
 
     async with stdio_client(server_params()) as (read, write):
         async with ClientSession(read, write) as session:
@@ -183,7 +205,7 @@ async def run_suite(model: str, custom_prompt: str | None = None, interactive: b
             print(f"[OK] Loaded reasoning skill prompt ({len(system_prompt)} chars)")
 
             if custom_prompt:
-                await execute_agent_turn(session, model, system_prompt, custom_prompt, ollama_tools)
+                await execute_agent_turn(session, model, system_prompt, custom_prompt, ollama_tools, num_ctx=num_ctx, temperature=temperature)
                 return
 
             if interactive:
@@ -198,7 +220,7 @@ async def run_suite(model: str, custom_prompt: str | None = None, interactive: b
                         break
                     if not user_input or user_input.lower() in ("exit", "quit"):
                         break
-                    await execute_agent_turn(session, model, system_prompt, user_input, ollama_tools)
+                    await execute_agent_turn(session, model, system_prompt, user_input, ollama_tools, num_ctx=num_ctx, temperature=temperature)
                 return
 
             # Default automated test prompts
@@ -209,7 +231,7 @@ async def run_suite(model: str, custom_prompt: str | None = None, interactive: b
             ]
 
             for prompt in test_prompts:
-                await execute_agent_turn(session, model, system_prompt, prompt, ollama_tools)
+                await execute_agent_turn(session, model, system_prompt, prompt, ollama_tools, num_ctx=num_ctx, temperature=temperature)
 
             print(f"\n{'='*70}")
             print("[SUCCESS] All test turns completed successfully!")
@@ -220,11 +242,13 @@ async def run_suite(model: str, custom_prompt: str | None = None, interactive: b
 def main():
     parser = argparse.ArgumentParser(description="Test MCP server with local Ollama model")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Ollama model name (default: {DEFAULT_MODEL})")
+    parser.add_argument("--num-ctx", type=int, default=DEFAULT_NUM_CTX, help=f"Context window size in tokens (default: {DEFAULT_NUM_CTX})")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (default: 0.0 for deterministic tool calling)")
     parser.add_argument("--prompt", "-p", help="Run a specific prompt")
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive chat session with the model")
     args = parser.parse_args()
 
-    asyncio.run(run_suite(args.model, args.prompt, args.interactive))
+    asyncio.run(run_suite(args.model, args.prompt, args.interactive, num_ctx=args.num_ctx, temperature=args.temperature))
 
 
 if __name__ == "__main__":

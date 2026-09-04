@@ -68,7 +68,12 @@ class RowSource(BaseModel):
 
     rows: list[PriceRow] | str | None = None
     ticker: Ticker | None = None
-    lookback_days: int = Field(default=300, ge=2, le=5000)
+    lookback_days: int = Field(
+        default=300,
+        ge=2,
+        le=5000,
+        description="most recent N trading rows (default 300). Trend indicators require at least 200 rows for SMA200.",
+    )
 
     @field_validator("rows", mode="before")
     @classmethod
