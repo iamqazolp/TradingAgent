@@ -137,3 +137,62 @@ def trend_group(close: pd.Series, params: dict | None = None) -> dict:
         params.get("macd_signal", 9),
     )
     return out
+
+def returns_by_window(close: pd.Series, windows=(5, 20, 60, 120)) -> dict:
+    """% return from N sessions ago to the latest close. Omits a window key
+    entirely (does not return 0 or null) when there isn't enough history,
+    per the addendum's contract."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n <= w:
+            continue  # insufficient_data for this window, omit the key
+        past = close.iloc[-(w + 1)]
+        latest = close.iloc[-1]
+        if past == 0:
+            continue
+        out[key] = round((latest - past) / past * 100, 2)
+    return out
+ 
+ 
+def detect_sma_crossover(close: pd.Series, fast: int, slow: int, dates: pd.Series = None) -> dict:
+    """Most recent golden/death cross between two SMAs, with the date it
+    happened. `dates` should be the same length as `close`, aligned index.
+    If omitted, close.index itself must be a real DatetimeIndex -- this
+    function refuses to guess a date from a plain integer position, since a
+    wrong-but-plausible-looking date (e.g. silently defaulting to the Unix
+    epoch) is worse than an explicit error."""
+    if len(close) < slow + 2:
+        return {"last_event": "none", "date": None}
+ 
+    if dates is None and not isinstance(close.index, pd.DatetimeIndex):
+        raise ValueError(
+            "detect_sma_crossover: no `dates` argument was given and close.index "
+            "is not a DatetimeIndex. Pass the real session dates explicitly rather "
+            "than relying on a positional index, otherwise the returned date is "
+            "meaningless."
+        )
+ 
+    sma_fast = close.rolling(fast).mean()
+    sma_slow = close.rolling(slow).mean()
+    diff = sma_fast - sma_slow
+    diff = diff.dropna()
+ 
+    if len(diff) < 2:
+        return {"last_event": "none", "date": None}
+ 
+    sign = (diff > 0).astype(int)
+    change = sign.diff()  # +1 = crossed up (golden), -1 = crossed down (death)
+ 
+    crossings = change[change != 0]
+    if crossings.empty:
+        return {"last_event": "none", "date": None}
+ 
+    last_idx = crossings.index[-1]
+    event = "golden_cross" if crossings.iloc[-1] == 1 else "death_cross"
+ 
+    date_value = dates.loc[last_idx] if dates is not None else last_idx
+    date_str = pd.Timestamp(date_value).strftime("%Y-%m-%d")
+    return {"last_event": event, "date": date_str}
+ 

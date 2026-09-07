@@ -191,3 +191,26 @@ def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
         "return_streak": return_streak(close),
     }
 
+def close_percentile_by_window(close: pd.Series, windows=(20, 60, 126)) -> dict:
+    """Extends the existing single-window close_percentile to several windows.
+    Percentile is close-based (highest/lowest CLOSE in the window), explicitly
+    not a true high/low range, must be labeled as such wherever surfaced."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n < w:
+            continue  # insufficient_data, omit the key
+        window = close.iloc[-w:]
+        lo, hi = window.min(), window.max()
+        latest = close.iloc[-1]
+        if hi == lo:
+            pct = 0.5  # flat window, avoid divide by zero, midpoint is the honest answer
+        else:
+            pct = (latest - lo) / (hi - lo)
+        out[key] = {
+            "value": round(float(pct), 3),
+            "range_high": round(float(hi), 2),
+            "range_low": round(float(lo), 2),
+        }
+    return out

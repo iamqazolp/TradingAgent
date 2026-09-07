@@ -81,6 +81,11 @@ def mcp_tools_to_openai(mcp_tools) -> list[dict]:
     return openai_tools
 
 
+class OpenRouterError(Exception):
+    """Raised when an OpenRouter API request fails."""
+    pass
+
+
 def call_openrouter_chat(
     model: str,
     messages: list[dict],
@@ -88,17 +93,17 @@ def call_openrouter_chat(
     temperature: float = 0.0,
     max_tokens: int | None = None,
     reasoning: bool = False,
+    max_retries: int = 3,
+    retry_delay: float = 2.0,
 ) -> dict:
-    """Send a chat completion request to OpenRouter API."""
+    """Send a chat completion request to OpenRouter API with retry and backoff."""
     if not OPENROUTER_API_KEY:
-        print(
-            "\n[ERROR] OPENROUTER_API_KEY not set.\n"
+        raise OpenRouterError(
+            "OPENROUTER_API_KEY not set.\n"
             "Set it in your .env file or environment:\n"
             "  export OPENROUTER_API_KEY='sk-or-...'\n"
-            "Get your key at: https://openrouter.ai/keys\n",
-            file=sys.stderr,
+            "Get your key at: https://openrouter.ai/keys"
         )
-        sys.exit(1)
 
     payload: dict = {
         "model": model,
@@ -114,27 +119,48 @@ def call_openrouter_chat(
         payload["reasoning"] = {"enabled": True}
 
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        OPENROUTER_API_URL,
-        data=data,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "HTTP-Referer": "https://github.com/TAOpenHarness",
-            "X-Title": "TA Open Harness",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        print(f"\n[ERROR] OpenRouter API returned HTTP {e.code}: {body}", file=sys.stderr)
-        sys.exit(1)
-    except urllib.error.URLError as e:
-        print(f"\n[ERROR] Failed to connect to OpenRouter: {e}", file=sys.stderr)
-        sys.exit(1)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://github.com/TAOpenHarness",
+        "X-Title": "TA Open Harness",
+    }
+
+    last_error = None
+    for attempt in range(max_retries + 1):
+        req = urllib.request.Request(
+            OPENROUTER_API_URL,
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            err_msg = f"HTTP {e.code}: {body}"
+            last_error = OpenRouterError(err_msg)
+
+            # Retry on 429 (rate limit) or 5xx (server errors)
+            if e.code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"[Notice] Received HTTP {e.code}. Retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...", file=sys.stderr)
+                import time
+                time.sleep(wait_time)
+                continue
+            raise last_error
+        except urllib.error.URLError as e:
+            last_error = OpenRouterError(f"Network connection failed: {e}")
+            if attempt < max_retries:
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"[Notice] Connection failed. Retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...", file=sys.stderr)
+                import time
+                time.sleep(wait_time)
+                continue
+            raise last_error
+
+    raise last_error or OpenRouterError("Unknown request failure")
 
 
 async def execute_agent_turn(
@@ -162,12 +188,16 @@ async def execute_agent_turn(
     while step < max_steps:
         step += 1
         print(f"\n[Step {step}] Sending request to {model} (temp={temperature}, reasoning={reasoning})...")
-        response = call_openrouter_chat(
-            model, messages, tools,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            reasoning=reasoning,
-        )
+        try:
+            response = call_openrouter_chat(
+                model, messages, tools,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                reasoning=reasoning,
+            )
+        except OpenRouterError as e:
+            print(f"\n[OpenRouter Error]: {e}", file=sys.stderr)
+            return ""
 
         # Handle API errors returned in response body
         if "error" in response:
@@ -181,20 +211,35 @@ async def execute_agent_turn(
 
         # Show reasoning if present
         reasoning_details = msg.get("reasoning_details")
-        if reasoning_details:
-            print(f"\n[Reasoning]:")
-            for detail in reasoning_details:
-                content = detail.get("content", "") if isinstance(detail, dict) else str(detail)
-                if content:
-                    # Show a preview of reasoning
-                    preview = content[:500] + ("..." if len(content) > 500 else "")
-                    print(f"  {preview}")
+        reasoning_text = msg.get("reasoning")
+        if reasoning_details or reasoning_text:
+            print("\n[Reasoning]:")
+            if reasoning_details:
+                for detail in reasoning_details:
+                    content = ""
+                    if isinstance(detail, dict):
+                        content = detail.get("text") or detail.get("content") or ""
+                    else:
+                        content = str(detail)
+                    if content:
+                        preview = content[:500] + ("..." if len(content) > 500 else "")
+                        print(f"  {preview}")
+            elif reasoning_text:
+                preview = reasoning_text[:500] + ("..." if len(reasoning_text) > 500 else "")
+                print(f"  {preview}")
 
         # Build the assistant message for conversation history
-        assistant_msg: dict = {"role": "assistant", "content": msg.get("content", "")}
-        # Preserve reasoning_details for multi-turn reasoning continuity
+        assistant_msg: dict = {"role": "assistant"}
+        if msg.get("content") is not None:
+            assistant_msg["content"] = msg.get("content")
+        else:
+            assistant_msg["content"] = ""
+
+        # Preserve reasoning_details and reasoning for multi-turn reasoning continuity
         if reasoning_details:
             assistant_msg["reasoning_details"] = reasoning_details
+        if reasoning_text:
+            assistant_msg["reasoning"] = reasoning_text
 
         tool_calls = msg.get("tool_calls")
         if tool_calls:
@@ -348,14 +393,21 @@ def main():
     parser.add_argument("--interactive", "-i", action="store_true", help="Interactive chat session with the model")
     args = parser.parse_args()
 
-    asyncio.run(run_suite(
-        args.model,
-        args.prompt,
-        args.interactive,
-        temperature=args.temperature,
-        max_tokens=args.max_tokens,
-        reasoning=args.reasoning,
-    ))
+    try:
+        asyncio.run(run_suite(
+            args.model,
+            args.prompt,
+            args.interactive,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            reasoning=args.reasoning,
+        ))
+    except OpenRouterError as e:
+        print(f"\n[OpenRouter Error]: {e}\n", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n[Interrupted by user]")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
