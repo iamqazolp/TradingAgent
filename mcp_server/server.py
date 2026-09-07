@@ -160,8 +160,10 @@ def _load_rows(source: RowSource) -> tuple[list[dict], str | None, dict | None]:
 @server.tool(
     description=(
         "Stored daily trading statistics for one ticker, oldest row first. "
-        "lookback_days counts the most recent trading rows, not calendar days. "
-        "Pass start/end to pin an explicit ISO date range instead."
+        "Feed is CLOSE-ONLY (contains close, volume, value, orders, foreign flow; NO intraday high/low). "
+        "lookback_days counts the most recent trading rows (e.g. lookback_days=10 for the last 10 sessions). "
+        "IMPORTANT: When asked for 'recent', 'latest', or 'last N days/sessions', pass ONLY `ticker` and `lookback_days`. "
+        "DO NOT guess or pass `start` or `end` dates unless the user explicitly specified calendar dates in their query."
     )
 )
 def get_price_data(
@@ -183,24 +185,36 @@ def get_price_data(
 
     conn = store.connect()
     try:
+        available = store.list_tickers(conn)
         if params.start or params.end:
             rows = store.get_range(conn, params.ticker, params.start, params.end)
+            if not rows and params.ticker in available and params.lookback_days != 300:
+                # Caller requested N recent rows but also hallucinated out-of-range dates.
+                # Fall back to get_recent so the query does not fail on hallucinated dates.
+                rows = store.get_recent(conn, params.ticker, params.lookback_days)
         else:
             rows = store.get_recent(conn, params.ticker, params.lookback_days)
-        available = store.list_tickers(conn)
     finally:
         conn.close()
 
     if not rows:
+        if params.ticker not in available:
+            msg = f"no stored rows for {params.ticker} (ticker not in the store)"
+        elif params.start or params.end:
+            earliest, latest = store.date_bounds(conn, params.ticker)
+            msg = (
+                f"no rows for {params.ticker} in range {params.start}..{params.end}. "
+                f"Stored data for {params.ticker} is between {earliest} and {latest}. "
+                f"To get the most recent sessions, call get_price_data with lookback_days={params.lookback_days} and omit start/end."
+            )
+        else:
+            msg = f"no stored rows for {params.ticker}"
         result = {
             "ticker": params.ticker,
             "rows": [],
             "row_count": 0,
             "error": "no_rows",
-            "message": (
-                f"no stored rows for {params.ticker}"
-                + ("" if params.ticker in available else " (ticker not in the store)")
-            ),
+            "message": msg,
             "available_tickers": available,
         }
     else:

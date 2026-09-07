@@ -117,10 +117,16 @@ class GetPriceDataInput(BaseModel):
         default=300,
         ge=1,
         le=5000,
-        description="most recent N trading rows, not calendar days",
+        description="most recent N trading rows (e.g. 10 for the last 10 sessions). Use this for any 'recent' or 'last N days' questions.",
     )
-    start: IsoDate | None = None
-    end: IsoDate | None = None
+    start: IsoDate | None = Field(
+        default=None,
+        description="Optional start date (YYYY-MM-DD). ONLY use when the user specifically requested a past historical date range. Do NOT invent or guess dates.",
+    )
+    end: IsoDate | None = Field(
+        default=None,
+        description="Optional end date (YYYY-MM-DD). ONLY use when the user specifically requested a past historical date range. Do NOT invent or guess dates.",
+    )
 
     @field_validator("ticker")
     @classmethod
