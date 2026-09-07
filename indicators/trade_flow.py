@@ -51,11 +51,15 @@ def avg_trade_size_by_side(df: pd.DataFrame, window: int = 20) -> dict:
     buy_ratio = ratio_to_prior_average(buy_size, window).rename("avg_buy_trade_size_ratio")
     sell_ratio = ratio_to_prior_average(sell_size, window).rename("avg_sell_trade_size_ratio")
 
+    lat_buy = latest(buy_size)
+    lat_sell = latest(sell_size)
     return {
         "window": window,
         "latest": {
-            "avg_buy_trade_size": latest(buy_size),
-            "avg_sell_trade_size": latest(sell_size),
+            "avg_buy_trade_size": lat_buy,
+            "avg_sell_trade_size": lat_sell,
+            "avg_buy_trade_size_lots": round(lat_buy / 100, 1) if lat_buy is not None else None,
+            "avg_sell_trade_size_lots": round(lat_sell / 100, 1) if lat_sell is not None else None,
             "avg_buy_trade_size_baseline": latest(prior_average(buy_size, window)),
             "avg_sell_trade_size_baseline": latest(prior_average(sell_size, window)),
             "buy_ratio_to_baseline": latest(buy_ratio),

@@ -161,12 +161,16 @@ def compute(
 
     frame = rows_to_frame(rows)
     close = frame["close"]
+    group_params = dict(params or {})
+    if "dates" not in group_params:
+        group_params["dates"] = pd.Series(frame.index, index=frame.index)
+
     results: dict[str, Any] = {}
     for group in requested:
         if group in _CLOSE_GROUPS:
-            results[group] = _CLOSE_GROUPS[group](close, params)
+            results[group] = _CLOSE_GROUPS[group](close, group_params)
         else:
-            results[group] = _FRAME_GROUPS[group](frame, params)
+            results[group] = _FRAME_GROUPS[group](frame, group_params)
 
     latest_close = finite(close.iloc[-1])
     latest_prev_close = finite(frame["prev_close"].iloc[-1])
@@ -207,6 +211,39 @@ def compute(
                 else:
                     trend_alignment = "transitional"
 
+    returns = None
+    if "trend" in results and isinstance(results["trend"], dict):
+        returns = results["trend"].get("returns_by_window")
+
+    latest_session = None
+    if len(frame) > 0:
+        latest_row = frame.iloc[-1]
+        bc = latest_row.get("buy_count")
+        sc = latest_row.get("sell_count")
+        tot_vol = finite(latest_row.get("total_volume"))
+        tot_val = finite(latest_row.get("total_value"))
+        buy_vol = finite(latest_row.get("buy_volume"))
+        sell_vol = finite(latest_row.get("sell_volume"))
+        fb_val = finite(latest_row.get("foreign_buy_value"))
+        fs_val = finite(latest_row.get("foreign_sell_value"))
+        latest_session = {
+            "date": str(frame.index[-1]),
+            "close": latest_close,
+            "volume_shares": tot_vol,
+            "volume_mil_shares": round(tot_vol / 1e6, 2) if tot_vol is not None else None,
+            "value_vnd": tot_val,
+            "value_bil_vnd": round(tot_val / 1e9, 2) if tot_val is not None else None,
+            "buy_count": int(bc) if bc is not None and pd.notna(bc) else None,
+            "sell_count": int(sc) if sc is not None and pd.notna(sc) else None,
+            "buy_volume_shares": buy_vol,
+            "buy_volume_mil": round(buy_vol / 1e6, 2) if buy_vol is not None else None,
+            "sell_volume_shares": sell_vol,
+            "sell_volume_mil": round(sell_vol / 1e6, 2) if sell_vol is not None else None,
+            "foreign_buy_value_bil": round(fb_val / 1e9, 2) if fb_val is not None else None,
+            "foreign_sell_value_bil": round(fs_val / 1e9, 2) if fs_val is not None else None,
+            "foreign_net_value_bil": round((fb_val - fs_val) / 1e9, 2) if fb_val is not None and fs_val is not None else None,
+        }
+
     return {
         "rows_used": int(len(frame)),
         "date_range": {"start": str(frame.index[0]), "end": str(frame.index[-1])},
@@ -215,6 +252,8 @@ def compute(
         "price_change_pct": price_change_pct,
         "price_limit_flag": price_limit_flag,
         "trend_alignment": trend_alignment,
+        "returns": returns,
+        "latest_session": latest_session,
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
     }

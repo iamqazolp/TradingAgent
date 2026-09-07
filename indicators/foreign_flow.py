@@ -32,9 +32,12 @@ def foreign_net_volume(df: pd.DataFrame) -> dict:
     sell = pd.to_numeric(df["foreign_sell_volume"], errors="coerce").astype("float64")
     daily = (buy - sell).rename("foreign_net_volume")
     cumulative = daily.cumsum().rename("foreign_net_volume_cum")
+    lat_vol = latest(daily)
+    cum_vol = latest(cumulative)
     return {
-        "latest": latest(daily),
-        "cumulative": latest(cumulative),
+        "latest": lat_vol,
+        "cumulative": cum_vol,
+        "cumulative_mil_shares": round(cum_vol / 1e6, 2) if cum_vol is not None else None,
         "days_with_zero_foreign_activity": int(((buy + sell) == 0).sum()),
         "series": daily,
         "cumulative_series": cumulative,
@@ -54,12 +57,16 @@ def foreign_net_value(df: pd.DataFrame) -> dict:
     sell = pd.to_numeric(df["foreign_sell_value"], errors="coerce").astype("float64")
     daily = (buy - sell).rename("foreign_net_value")
     cumulative = daily.cumsum().rename("foreign_net_value_cum")
+    lat_val = latest(daily)
+    cum_val = latest(cumulative)
     return {
-        "latest": latest(daily),
-        "latest_vnd": latest(daily),
-        "cumulative": latest(cumulative),
-        "cumulative_vnd": latest(cumulative),
-        "stance": _stance(latest(cumulative)),
+        "latest": lat_val,
+        "latest_vnd": lat_val,
+        "latest_bil_vnd": round(lat_val / 1e9, 2) if lat_val is not None else None,
+        "cumulative": cum_val,
+        "cumulative_vnd": cum_val,
+        "cumulative_bil_vnd": round(cum_val / 1e9, 2) if cum_val is not None else None,
+        "stance": _stance(cum_val),
         "series": daily,
         "cumulative_series": cumulative,
     }

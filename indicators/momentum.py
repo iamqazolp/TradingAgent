@@ -178,16 +178,46 @@ def return_streak(close: pd.Series) -> dict:
     }
 
 
+def close_percentile_by_window(close: pd.Series, windows=(20, 60, 126)) -> dict:
+    """Extends the existing single-window close_percentile to several windows.
+    Percentile is close-based (highest/lowest CLOSE in the window), explicitly
+    not a true high/low range, must be labeled as such wherever surfaced."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n < w:
+            continue  # insufficient_data, omit the key
+        window = close.iloc[-w:]
+        lo, hi = window.min(), window.max()
+        latest = close.iloc[-1]
+        if hi == lo:
+            pct = 0.5  # flat window, avoid divide by zero, midpoint is the honest answer
+        else:
+            pct = (latest - lo) / (hi - lo)
+        out[key] = {
+            "value": round(float(pct), 3),
+            "range_high": round(float(hi), 2),
+            "range_low": round(float(lo), 2),
+        }
+    return out
+
+
 def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group B indicator, keyed by name."""
     params = params or {}
     n = params.get("rsi_window", 14)
     z_window = params.get("z_score_window", 20)
     pct_window = params.get("percentile_window", 20)
+    pct_windows = params.get("percentile_windows", (20, 60, 126))
+    by_window = close_percentile_by_window(close, pct_windows)
     return {
         f"rsi_{n}": rsi(close, n),
         f"z_score_{z_window}": z_score(close, z_window),
         f"close_percentile_{pct_window}": close_percentile(close, pct_window),
+        "close_percentile_by_window": by_window,
+        "close_percentiles": by_window,
         "return_streak": return_streak(close),
     }
+
 

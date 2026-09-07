@@ -29,9 +29,16 @@ from indicators.foreign_flow import (
     foreign_participation_ratio,
     foreign_room_trend,
 )
-from indicators.momentum import rsi
+from indicators.momentum import close_percentile_by_window, rsi
 from indicators.trade_flow import avg_trade_size_by_side, buy_sell_count_imbalance
-from indicators.trend import ema, ema_series, macd, sma
+from indicators.trend import (
+    detect_sma_crossover,
+    ema,
+    ema_series,
+    macd,
+    returns_by_window,
+    sma,
+)
 from indicators.value_flow import avg_trade_value, value_spike
 from indicators.volatility import bollinger, close_to_close_volatility
 from indicators.volume_flow import buy_sell_volume_imbalance, obv
@@ -430,3 +437,73 @@ def test_room_change_without_matching_foreign_trades_is_flagged_structural():
 def test_foreign_room_trend_needs_window_plus_one_rows():
     frame = build_frame(foreign_room=[1_000, 900])
     assert_insufficient(foreign_room_trend(frame, 5), required=6, available=2)
+
+
+# --------------------------------------------------------------------------- addendum indicators
+
+
+def test_returns_by_window_calculates_and_omits_insufficient():
+    # 6 closes: allows 5d return, but omits 20d, 60d, 120d
+    close = pd.Series([10.0, 10.0, 10.0, 10.0, 10.0, 12.5])
+    res = returns_by_window(close, windows=(5, 20, 60, 120))
+    assert res["5d"] == pytest.approx(25.0)
+    assert "20d" not in res
+    assert "60d" not in res
+    assert "120d" not in res
+
+    # If exactly 5 closes, 5d return is also omitted (needs w+1 = 6 closes)
+    res_short = returns_by_window(close.iloc[:5], windows=(5, 20))
+    assert "5d" not in res_short
+
+
+def test_detect_sma_crossover_events():
+    # Golden cross: fast crosses above slow
+    dates = pd.date_range("2026-01-01", periods=20)
+    prices = [10.0] * 10 + [20.0 + i for i in range(10)]
+    close = pd.Series(prices, index=dates)
+    res = detect_sma_crossover(close, fast=3, slow=6)
+    assert res["last_event"] == "golden_cross"
+    assert res["date"] == "2026-01-11"
+
+    # Death cross: fast crosses below slow
+    dates_25 = pd.date_range("2026-01-01", periods=25)
+    prices_down = [10.0 + i * 2 for i in range(12)] + [5.0] * 13
+    close_down = pd.Series(prices_down, index=dates_25)
+    res_down = detect_sma_crossover(close_down, fast=3, slow=6)
+    assert res_down["last_event"] == "death_cross"
+    assert res_down["date"] == "2026-01-13"
+
+    # Short history returns last_event: "none"
+    short_close = pd.Series([10.0] * 5, index=dates[:5])
+    assert detect_sma_crossover(short_close, fast=3, slow=6) == {"last_event": "none", "date": None}
+
+    # Positional index without dates raises ValueError
+    pos_close = pd.Series(prices)
+    with pytest.raises(ValueError, match="no `dates` argument was given"):
+        detect_sma_crossover(pos_close, fast=3, slow=6)
+
+    # Positional index with explicit dates works
+    dates_series = pd.Series([d.strftime("%Y-%m-%d") for d in dates])
+    res_explicit = detect_sma_crossover(pos_close, fast=3, slow=6, dates=dates_series)
+    assert res_explicit["last_event"] == "golden_cross"
+    assert res_explicit["date"] == "2026-01-11"
+
+
+def test_close_percentile_by_window_multi():
+    # 25 closes: 20d window present, 60d and 126d omitted
+    prices = [10.0 + i for i in range(25)]
+    close = pd.Series(prices)
+    res = close_percentile_by_window(close, windows=(20, 60, 126))
+    assert "20d" in res
+    assert "60d" not in res
+    assert "126d" not in res
+    # Last 20 are 15..34. min=15, max=34, cur=34 -> pct=1.0
+    assert res["20d"]["value"] == pytest.approx(1.0)
+    assert res["20d"]["range_high"] == pytest.approx(34.0)
+    assert res["20d"]["range_low"] == pytest.approx(15.0)
+
+    # Flat window returns 0.5
+    flat = pd.Series([15.0] * 25)
+    res_flat = close_percentile_by_window(flat, windows=(20,))
+    assert res_flat["20d"]["value"] == pytest.approx(0.5)
+

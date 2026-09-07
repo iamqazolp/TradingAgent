@@ -120,6 +120,67 @@ def _crossover(previous: float | None, current: float | None) -> str:
     return "none"
 
 
+def returns_by_window(close: pd.Series, windows=(5, 20, 60, 120)) -> dict:
+    """% return from N sessions ago to the latest close. Omits a window key
+    entirely (does not return 0 or null) when there isn't enough history,
+    per the addendum's contract."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n <= w:
+            continue  # insufficient_data for this window, omit the key
+        past = close.iloc[-(w + 1)]
+        latest = close.iloc[-1]
+        if past == 0:
+            continue
+        out[key] = round(float((latest - past) / past * 100), 2)
+    return out
+
+
+def detect_sma_crossover(close: pd.Series, fast: int, slow: int, dates: pd.Series = None) -> dict:
+    """Most recent golden/death cross between two SMAs, with the date it
+    happened. `dates` should be the same length as `close`, aligned index.
+    If omitted, close.index itself must be a real DatetimeIndex -- this
+    function refuses to guess a date from a plain integer position, since a
+    wrong-but-plausible-looking date (e.g. silently defaulting to the Unix
+    epoch) is worse than an explicit error."""
+    if len(close) < slow + 2:
+        return {"last_event": "none", "date": None}
+
+    if dates is None and not isinstance(close.index, pd.DatetimeIndex):
+        raise ValueError(
+            "detect_sma_crossover: no `dates` argument was given and close.index "
+            "is not a DatetimeIndex. Pass the real session dates explicitly rather "
+            "than relying on a positional index, otherwise the returned date is "
+            "meaningless."
+        )
+
+    sma_fast = close.rolling(fast).mean()
+    sma_slow = close.rolling(slow).mean()
+    diff = sma_fast - sma_slow
+    diff = diff.dropna()
+
+    if len(diff) < 2:
+        return {"last_event": "none", "date": None}
+
+    sign = (diff > 0).astype(int)
+    change = sign.diff().dropna()  # dropna to exclude leading NaN from diff
+
+    crossings = change[change != 0]
+    if crossings.empty:
+        return {"last_event": "none", "date": None}
+
+    last_idx = crossings.index[-1]
+    event = "golden_cross" if crossings.iloc[-1] == 1 else "death_cross"
+
+    date_value = dates.loc[last_idx] if dates is not None else last_idx
+    if isinstance(date_value, pd.Series):
+        date_value = date_value.iloc[-1]
+    date_str = pd.Timestamp(date_value).strftime("%Y-%m-%d")
+    return {"last_event": event, "date": date_str}
+
+
 def trend_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
@@ -136,4 +197,25 @@ def trend_group(close: pd.Series, params: dict | None = None) -> dict:
         params.get("macd_slow", 26),
         params.get("macd_signal", 9),
     )
+    return_windows = params.get("return_windows", (5, 20, 60, 120))
+    out["returns"] = returns_by_window(close, return_windows)
+    out["returns_by_window"] = out["returns"]
+
+    dates = params.get("dates")
+    if dates is None and not isinstance(close.index, pd.DatetimeIndex):
+        if len(close) > 0 and isinstance(close.index[0], str):
+            try:
+                pd.Timestamp(close.index[0])
+                dates = pd.Series(close.index, index=close.index)
+            except Exception:
+                dates = None
+
+    crossover_pairs = params.get("crossover_pairs", ((20, 50), (50, 200)))
+    for fast, slow in crossover_pairs:
+        key = f"sma_crossover_{fast}_{slow}"
+        try:
+            out[key] = detect_sma_crossover(close, fast, slow, dates=dates)
+        except ValueError:
+            out[key] = {"last_event": "none", "date": None}
     return out
+
