@@ -167,16 +167,24 @@ async def execute_agent_turn(
                 preview = output_str[:250] + ("..." if len(output_str) > 250 else "")
                 print(f"<- [Tool Result]: {preview}")
 
-                messages.append({
+                tool_msg = {
                     "role": "tool",
                     "content": output_str,
-                })
+                }
+                call_id = call.get("id")
+                if call_id:
+                    tool_msg["tool_call_id"] = call_id
+                messages.append(tool_msg)
             except Exception as e:
                 print(f"<- [Tool Error]: {e}")
-                messages.append({
+                err_msg = {
                     "role": "tool",
                     "content": json.dumps({"error": str(e)}),
-                })
+                }
+                call_id = call.get("id")
+                if call_id:
+                    err_msg["tool_call_id"] = call_id
+                messages.append(err_msg)
 
     print(f"[Warning] Max tool turns reached ({max_steps}).")
     return ""
