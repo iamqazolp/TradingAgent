@@ -32,8 +32,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from mcp import ClientSession  # noqa: E402
 from mcp.client.stdio import StdioServerParameters, stdio_client  # noqa: E402
 
-DEFAULT_MODEL = "llama3.1:8b"
-DEFAULT_NUM_CTX = 16384
+DEFAULT_MODEL = os.environ.get("TA_AGENT_MODEL", "llama3.1:8b")
+DEFAULT_NUM_CTX = int(os.environ.get("TA_AGENT_NUM_CTX", "16384"))
 OLLAMA_API_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 
