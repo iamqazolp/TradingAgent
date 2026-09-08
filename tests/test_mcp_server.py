@@ -178,6 +178,10 @@ def test_compute_indicators_with_inline_rows_matches_the_stored_result():
 
 
 def test_series_tail_controls_the_payload_size():
+    default_tail = call(
+        "compute_indicators", {"ticker": TICKER, "groups": ["trend"]}
+    )
+    assert len(default_tail["groups"]["trend"]["sma_20"]["series"]["values"]) == 20
     trimmed = call(
         "compute_indicators", {"ticker": TICKER, "groups": ["trend"], "series_tail": 2}
     )

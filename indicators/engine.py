@@ -144,7 +144,7 @@ def compute(
     groups: list[str] | tuple[str, ...] | None = None,
     params: dict | None = None,
     *,
-    series_tail: int = 10,
+    series_tail: int = 20,
 ) -> dict:
     """Compute the requested indicator groups from `rows`.
 
@@ -390,7 +390,7 @@ def _quality_warnings(gaps: list, zero_volume: list, corporate_actions: list) ->
 # --------------------------------------------------------------------------- serialize
 
 
-def serialize(obj: Any, series_tail: int = 10) -> Any:
+def serialize(obj: Any, series_tail: int = 20) -> Any:
     """Recursively convert pandas/numpy values into JSON-safe primitives.
 
     Series become ``{"dates": [...], "values": [...]}`` trimmed to the last

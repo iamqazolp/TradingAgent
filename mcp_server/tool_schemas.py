@@ -163,7 +163,7 @@ class ComputeIndicatorsInput(RowSource):
         ),
     )
     series_tail: int = Field(
-        default=2, ge=0, le=100, description="points of each series to return; 0 for none"
+        default=20, ge=0, le=250, description="points of each series to return; 0 for none. Default 20 provides ~1 month of history for divergence and trajectory analysis."
     )
 
     @field_validator("groups", mode="before")

@@ -132,7 +132,7 @@ async def execute_agent_turn(
         {"role": "user", "content": user_prompt},
     ]
 
-    max_steps = 5
+    max_steps = 15
     step = 0
 
     while step < max_steps:
