@@ -73,10 +73,13 @@ def audit_entries(tmp_path: Path) -> list[dict]:
 # --------------------------------------------------------------------------- surface
 
 
-def test_the_server_exposes_exactly_three_tools():
+def test_the_server_exposes_expected_tools():
     tools = asyncio.run(server.list_tools())
     assert sorted(t.name for t in tools) == [
+        "analyze_multi_horizon",
+        "compare_tickers",
         "compute_indicators",
+        "compute_weekly_indicators",
         "get_flow_summary",
         "get_price_data",
     ]

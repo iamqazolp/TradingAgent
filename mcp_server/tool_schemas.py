@@ -204,6 +204,119 @@ class GetFlowSummaryInput(RowSource):
     window: int = Field(default=5, ge=2, le=250, description="rolling window in trading days")
 
 
+class AnalyzeMultiHorizonInput(BaseModel):
+    """Input for `analyze_multi_horizon`.
+
+    This tool always loads rows server-side (by ticker) because it needs
+    a large lookback for weekly aggregation and long-term indicators.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ticker: Ticker
+    lookback_days: int = Field(
+        default=500,
+        ge=10,
+        le=5000,
+        description=(
+            "Number of most recent trading rows to load. Default 500 "
+            "(~2 years). Can be smaller (e.g. 60-90 for 3 months) for shorter queries."
+        ),
+    )
+    series_tail: int = Field(
+        default=5, ge=0, le=250,
+        description="Daily series tail length (default 5).",
+    )
+    weekly_series_tail: int = Field(
+        default=5, ge=0, le=100,
+        description="Weekly series tail length (default 5).",
+    )
+
+    @field_validator("ticker")
+    @classmethod
+    def _upper(cls, value: str) -> str:
+        return value.upper()
+
+
+class ComputeWeeklyInput(RowSource):
+    """Input for `compute_weekly_indicators`."""
+
+    groups: list[GroupName] | str = Field(
+        default_factory=lambda: list(GROUPS),
+        description=f"subset of: {', '.join(GROUPS)}",
+    )
+    series_tail: int = Field(
+        default=26, ge=0, le=100,
+        description="points of each weekly series to return; default 26 (~6 months).",
+    )
+
+    @field_validator("groups", mode="before")
+    @classmethod
+    def _known_groups(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            v = value.strip()
+            if (v.startswith("[") and v.endswith("]")) or (v.startswith("(") and v.endswith(")")):
+                import ast
+                try:
+                    parsed = ast.literal_eval(v)
+                    if isinstance(parsed, (list, tuple)):
+                        v_list = [str(x).strip() for x in parsed]
+                    else:
+                        v_list = [str(parsed).strip()]
+                except Exception:
+                    v_clean = v.strip("[]()").replace('"', "").replace("'", "")
+                    v_list = [g.strip().strip("'\"") for g in v_clean.split(",") if g.strip().strip("'\"")]
+            else:
+                v_list = [g.strip().strip("'\"") for g in v.split(",") if g.strip().strip("'\"")]
+            value = v_list
+        elif isinstance(value, (tuple, set)):
+            value = list(value)
+        elif not isinstance(value, list):
+            value = [value]
+
+        unknown = [g for g in value if g not in GROUPS]
+        if unknown:
+            raise ValueError(
+                f"unknown group(s): {', '.join(unknown)}; valid: {', '.join(GROUPS)}"
+            )
+        return list(dict.fromkeys(value)) or list(GROUPS)
+
+
+class CompareTickersInput(BaseModel):
+    """Input for `compare_tickers`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tickers: list[Ticker] | str = Field(
+        description="List of 2 to 5 stock ticker symbols to compare (e.g. ['CTG', 'VCB'] or 'CTG,VCB')."
+    )
+    lookback_days: int = Field(
+        default=250,
+        ge=20,
+        le=5000,
+        description="Trading sessions to look back (default 250 for ~1 year performance analysis).",
+    )
+
+    @field_validator("tickers", mode="before")
+    @classmethod
+    def _normalize_tickers(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            v = value.strip().strip("[]()")
+            parts = [t.strip().strip("'\"").upper() for t in v.split(",") if t.strip().strip("'\"")]
+            return parts
+        if isinstance(value, (list, tuple)):
+            return [str(t).strip().upper() for t in value if str(t).strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _check_ticker_count(self):
+        if not self.tickers or len(self.tickers) < 2:
+            raise ValueError("compare_tickers requires at least 2 tickers")
+        if len(self.tickers) > 5:
+            raise ValueError("compare_tickers supports a maximum of 5 tickers")
+        return self
+
+
 def rows_as_dicts(rows: list[PriceRow]) -> list[dict]:
     """Validated rows back to plain dicts for the engine."""
     return [row.model_dump(exclude_none=True) for row in rows]

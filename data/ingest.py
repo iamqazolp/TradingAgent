@@ -117,7 +117,7 @@ def cast_int(value: Any, field_name: str, *, default: int | None = None) -> int:
         return default
     try:
         return int(float(text))
-    except ValueError as exc:  # pragma: no cover - defensive
+    except (ValueError, OverflowError) as exc:  # pragma: no cover - defensive
         raise IngestError(f"{field_name}={value!r} is not an integer") from exc
 
 

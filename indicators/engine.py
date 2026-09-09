@@ -29,6 +29,12 @@ from indicators.volume_flow import (
     prev_close_mismatches,
     volume_flow_group,
 )
+from indicators.weekly import aggregate_weekly, weekly_quality_flags
+from indicators.horizon import horizon_analysis
+from indicators.scenarios import generate_scenarios
+from indicators.strategies import suggest_strategies
+from indicators.stats_52w import stats_52w
+from indicators.pivots import classic_pivots
 
 #: Columns the engine expects on every row.
 REQUIRED_COLUMNS = (
@@ -139,34 +145,27 @@ def derived_frame(frame: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------- compute
 
 
-def compute(
-    rows: list[dict],
-    groups: list[str] | tuple[str, ...] | None = None,
+def _compute_core(
+    frame: pd.DataFrame,
+    groups: list[str] | tuple[str, ...],
     params: dict | None = None,
     *,
     series_tail: int = 20,
 ) -> dict:
-    """Compute the requested indicator groups from `rows`.
+    """Internal: compute indicator groups from a pre-built frame.
 
-    `groups` is a subset of :data:`GROUPS`; None means all of them. Series are
-    trimmed to their last `series_tail` points on the way out, since the full
-    history is already available through `get_price_data`.
+    This is the shared logic for both :func:`compute` (daily rows) and
+    :func:`multi_horizon_compute` (weekly aggregated frame).  Callers
+    that already have a frame can skip the ``rows_to_frame`` validation
+    overhead.
     """
-    requested = tuple(groups) if groups else GROUPS
-    unknown = [g for g in requested if g not in GROUPS]
-    if unknown:
-        raise EngineError(
-            f"unknown group(s): {', '.join(unknown)}; valid groups are {', '.join(GROUPS)}"
-        )
-
-    frame = rows_to_frame(rows)
     close = frame["close"]
     group_params = dict(params or {})
     if "dates" not in group_params:
         group_params["dates"] = pd.Series(frame.index, index=frame.index)
 
     results: dict[str, Any] = {}
-    for group in requested:
+    for group in groups:
         if group in _CLOSE_GROUPS:
             results[group] = _CLOSE_GROUPS[group](close, group_params)
         else:
@@ -244,6 +243,25 @@ def compute(
             "foreign_net_value_bil": round((fb_val - fs_val) / 1e9, 2) if fb_val is not None and fs_val is not None else None,
         }
 
+    recent_history = []
+    if len(frame) > 0:
+        sub_tail = frame.tail(min(5, len(frame)))
+        for dt_idx, r in sub_tail.iterrows():
+            c_val = finite(r.get("close"))
+            pc_val = finite(r.get("prev_close"))
+            chg = round((c_val - pc_val) / pc_val * 100, 2) if c_val and pc_val and pc_val > 0 else 0.0
+            tv_val = finite(r.get("total_volume"))
+            fb_v = finite(r.get("foreign_buy_value"))
+            fs_v = finite(r.get("foreign_sell_value"))
+            fnet_b = round((fb_v - fs_v) / 1e9, 2) if fb_v is not None and fs_v is not None else None
+            recent_history.append({
+                "date": str(dt_idx),
+                "close": c_val,
+                "change_pct": chg,
+                "volume_mil": round(tv_val / 1e6, 2) if tv_val is not None else None,
+                "foreign_net_bil": fnet_b,
+            })
+
     return {
         "rows_used": int(len(frame)),
         "date_range": {"start": str(frame.index[0]), "end": str(frame.index[-1])},
@@ -254,9 +272,134 @@ def compute(
         "trend_alignment": trend_alignment,
         "returns": returns,
         "latest_session": latest_session,
+        "recent_history": recent_history,
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
     }
+
+
+def compute(
+    rows: list[dict],
+    groups: list[str] | tuple[str, ...] | None = None,
+    params: dict | None = None,
+    *,
+    series_tail: int = 20,
+) -> dict:
+    """Compute the requested indicator groups from `rows`.
+
+    `groups` is a subset of :data:`GROUPS`; None means all of them. Series are
+    trimmed to their last `series_tail` points on the way out, since the full
+    history is already available through `get_price_data`.
+    """
+    requested = tuple(groups) if groups else GROUPS
+    unknown = [g for g in requested if g not in GROUPS]
+    if unknown:
+        raise EngineError(
+            f"unknown group(s): {', '.join(unknown)}; valid groups are {', '.join(GROUPS)}"
+        )
+
+    frame = rows_to_frame(rows)
+    return _compute_core(frame, requested, params, series_tail=series_tail)
+
+
+def multi_horizon_compute(
+    rows: list[dict],
+    *,
+    series_tail: int = 5,
+    weekly_series_tail: int = 5,
+    include_series: bool = False,
+) -> dict:
+    """Full multi-horizon analysis: daily + weekly indicators, horizons,
+    scenarios, and investment strategies.
+
+    This is the "super-compute" entry point that the ``analyze_multi_horizon``
+    MCP tool calls.  It orchestrates:
+
+    1. Daily indicator computation (all groups)
+    2. Weekly bar aggregation from daily data
+    3. Weekly indicator computation (all groups, if enough bars)
+    4. Three-horizon investment analysis (short / mid / long term)
+    5. Scenario generation (bullish / neutral / bearish)
+    6. Strategy suggestions per horizon
+
+    Parameters
+    ----------
+    rows
+        Daily row dicts, same format as :func:`compute`.
+    series_tail
+        How many daily data points to include in series output (default 5).
+    weekly_series_tail
+        How many weekly data points to include in series output (default 5).
+    include_series
+        Whether to keep raw float series arrays. If False (default), series
+        arrays are pruned to keep LLM context light.
+
+    Returns
+    -------
+    dict
+        Keys: ``daily``, ``weekly``, ``horizons``, ``scenarios``,
+        ``strategies``, plus metadata.
+    """
+    # 1. Build daily frame and compute daily indicators
+    frame = rows_to_frame(rows)
+    daily_result = _compute_core(
+        frame, GROUPS, series_tail=series_tail,
+    )
+
+    # 2. Aggregate daily → weekly
+    weekly_frame = aggregate_weekly(frame)
+    weekly_result = None
+    weekly_flags = []
+
+    # Need at least ~14 weekly bars for RSI(14) to produce a value
+    _MIN_WEEKLY_BARS = 14
+    if len(weekly_frame) >= _MIN_WEEKLY_BARS:
+        # Drop rows with NaN prev_close (first week) for clean computation
+        wf_clean = weekly_frame.dropna(subset=["prev_close"])
+        if len(wf_clean) >= _MIN_WEEKLY_BARS:
+            weekly_result = _compute_core(
+                wf_clean, GROUPS, series_tail=weekly_series_tail,
+            )
+            weekly_result["timeframe"] = "weekly"
+            weekly_flags = weekly_quality_flags(weekly_frame)
+            if weekly_flags:
+                weekly_result["quality_flags"] = weekly_flags
+
+    daily_result["timeframe"] = "daily"
+
+    # 3. Multi-horizon analysis
+    latest_close = daily_result.get("latest_close")
+    horizons = horizon_analysis(daily_result, weekly_result, latest_close)
+
+    # 4. Scenario generation
+    scenarios = generate_scenarios(
+        daily_result, weekly_result, horizons, latest_close,
+    )
+
+    # 5. Strategy / Technical perspective suggestions
+    strategies = suggest_strategies(
+        horizons, scenarios, latest_close, daily_result,
+    )
+
+    # 6. 52-week stats and Pivot Points
+    s52 = stats_52w(frame, window=min(250, len(frame)))
+    piv = classic_pivots(frame)
+
+    result = {
+        "analysis_type": "multi_horizon",
+        "daily": daily_result,
+        "weekly": weekly_result,
+        "weekly_bars_available": int(len(weekly_frame)),
+        "weekly_bars_min_required": _MIN_WEEKLY_BARS,
+        "horizons": horizons,
+        "scenarios": scenarios,
+        "strategies": strategies,
+        "stats_52w": s52,
+        "pivots": piv,
+    }
+    if not include_series:
+        result = prune_series(result)
+    return result
 
 
 def flow_summary(rows: list[dict], window: int = 5) -> dict:
@@ -426,3 +569,23 @@ def unsupported(metric: str) -> dict:
     if reason is None:
         return insufficient(f"unknown metric {metric!r}", 0)
     return {"unsupported": True, "metric": key, "reason": reason}
+
+
+def prune_series(obj: Any) -> Any:
+    """Prune verbose historical series arrays from analysis dicts to keep LLM context light.
+
+    Removes dict keys ending in '_series', 'series', and 'normalized_series_100'.
+    Scalar summaries, levels, horizons, scenarios, and pivots are preserved.
+    """
+    if isinstance(obj, dict):
+        return {
+            k: prune_series(v)
+            for k, v in obj.items()
+            if not k.endswith("_series")
+            and k != "series"
+            and k != "normalized_series_100"
+        }
+    if isinstance(obj, list):
+        return [prune_series(x) for x in obj]
+    return obj
+

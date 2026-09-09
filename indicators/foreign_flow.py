@@ -59,6 +59,25 @@ def foreign_net_value(df: pd.DataFrame) -> dict:
     cumulative = daily.cumsum().rename("foreign_net_value_cum")
     lat_val = latest(daily)
     cum_val = latest(cumulative)
+
+    # Calculate multi-window cumulative stats (20, 60, 120 sessions)
+    windows_stats = {}
+    for w in (20, 60, 120):
+        sub = daily.tail(w)
+        if len(sub) > 0:
+            sub_sum = float(sub.sum())
+            buy_cnt = int((sub > 0).sum())
+            sell_cnt = int((sub < 0).sum())
+            net_bil = round(sub_sum / 1e9, 2)
+            windows_stats[f"{w}d"] = {
+                "window": len(sub),
+                "net_value_bil": net_bil,
+                "net_value_vnd": sub_sum,
+                "buying_days": buy_cnt,
+                "selling_days": sell_cnt,
+                "summary": f"{buy_cnt}/{len(sub)} phiên mua ròng (lũy kế {net_bil:+.2f} tỷ VND)",
+            }
+
     return {
         "latest": lat_val,
         "latest_vnd": lat_val,
@@ -67,6 +86,7 @@ def foreign_net_value(df: pd.DataFrame) -> dict:
         "cumulative_vnd": cum_val,
         "cumulative_bil_vnd": round(cum_val / 1e9, 2) if cum_val is not None else None,
         "stance": _stance(cum_val),
+        "windows": windows_stats,
         "series": daily,
         "cumulative_series": cumulative,
     }

@@ -184,20 +184,32 @@ def detect_sma_crossover(close: pd.Series, fast: int, slow: int, dates: pd.Serie
 def trend_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
-    sma_windows = params.get("sma_windows", (20, 50, 200))
-    ema_windows = params.get("ema_windows", (12, 26))
+    sma_windows = params.get("sma_windows", (20, 50, 100, 200))
+    ema_windows = params.get("ema_windows", (12, 20, 26, 50, 200))
     out: dict[str, dict] = {}
+    latest_c = latest(close)
+
     for n in sma_windows:
-        out[f"sma_{n}"] = sma(close, n)
+        res = sma(close, n)
+        if isinstance(res, dict) and "latest" in res and res["latest"] is not None and latest_c is not None:
+            ma_val = res["latest"]
+            res["distance_pct"] = round((latest_c - ma_val) / ma_val * 100, 2) if ma_val > 0 else None
+        out[f"sma_{n}"] = res
+
     for n in ema_windows:
-        out[f"ema_{n}"] = ema(close, n)
+        res = ema(close, n)
+        if isinstance(res, dict) and "latest" in res and res["latest"] is not None and latest_c is not None:
+            ma_val = res["latest"]
+            res["distance_pct"] = round((latest_c - ma_val) / ma_val * 100, 2) if ma_val > 0 else None
+        out[f"ema_{n}"] = res
+
     out["macd"] = macd(
         close,
         params.get("macd_fast", 12),
         params.get("macd_slow", 26),
         params.get("macd_signal", 9),
     )
-    return_windows = params.get("return_windows", (5, 20, 60, 120))
+    return_windows = params.get("return_windows", (5, 20, 60, 120, 250))
     out["returns"] = returns_by_window(close, return_windows)
     out["returns_by_window"] = out["returns"]
 

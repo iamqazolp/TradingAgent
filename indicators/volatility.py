@@ -37,8 +37,37 @@ def bollinger(close: pd.Series, n: int = 20, k: float = 2.0) -> dict:
         name="bollinger_width",
     )
     # Where the last close sits inside the band: 0 at the lower band, 1 at the upper.
-    percent_b = safe_div(finite(values.iloc[-1]) - finite(lower.iloc[-1]),
-                         finite(upper.iloc[-1]) - finite(lower.iloc[-1]))
+    _val = finite(values.iloc[-1])
+    _low = finite(lower.iloc[-1])
+    _up = finite(upper.iloc[-1])
+    if _val is not None and _low is not None and _up is not None:
+        percent_b = safe_div(_val - _low, _up - _low)
+    else:
+        percent_b = None
+    width_val = latest(width)
+    bandwidth_pct = round(width_val * 100, 2) if width_val is not None else None
+    percent_b_val = percent_b
+    percent_b_pct = round(percent_b_val * 100, 2) if percent_b_val is not None else None
+
+    # Check for Bollinger Band Squeeze (width below 20-period 10th percentile or narrow bandwidth)
+    squeeze = False
+    if len(width.dropna()) >= 20:
+        squeeze = bool(width_val is not None and width_val <= float(width.dropna().tail(20).quantile(0.15)))
+
+    # Qualitative position
+    pos = "middle"
+    if percent_b_val is not None:
+        if percent_b_val >= 1.0:
+            pos = "above_upper"
+        elif percent_b_val >= 0.8:
+            pos = "near_upper"
+        elif percent_b_val <= 0.0:
+            pos = "below_lower"
+        elif percent_b_val <= 0.2:
+            pos = "near_lower"
+        else:
+            pos = "inside_band"
+
     return {
         "window": n,
         "k": float(k),
@@ -48,8 +77,13 @@ def bollinger(close: pd.Series, n: int = 20, k: float = 2.0) -> dict:
             "lower": latest(lower),
             "close": finite(values.iloc[-1]),
             "percent_b": percent_b,
-            "width": latest(width),
+            "percent_b_pct": percent_b_pct,
+            "width": width_val,
+            "bandwidth_pct": bandwidth_pct,
         },
+        "position": pos,
+        "squeeze": squeeze,
+        "bandwidth": bandwidth_pct,
         "middle_series": middle.rename("bollinger_middle"),
         "upper_series": upper.rename("bollinger_upper"),
         "lower_series": lower.rename("bollinger_lower"),
@@ -58,16 +92,11 @@ def bollinger(close: pd.Series, n: int = 20, k: float = 2.0) -> dict:
 
 
 def close_to_close_volatility(close: pd.Series, n: int = 20) -> dict:
-    """Rolling stdev of daily log returns of close, in percent.
-
-    Sample stdev (ddof=1), the usual realized-volatility convention. Requires
-    `n + 1` closes to form `n` returns. This is the ATR substitute used for
-    stop-loss sizing; it is not ATR and must never be labelled as such.
-    """
-    required = n + 1
-    marker = require(close, required, f"close_to_close_volatility({n})")
+    """Rolling stdev of daily log returns over `n` rows, ATR substitute."""
+    marker = require(close, n + 1, f"close_to_close_volatility({n})")
     if marker:
         return marker
+    required = n + 1
     values = pd.to_numeric(close, errors="coerce").astype("float64")
     if bool((values <= 0).any()):
         return insufficient(
@@ -103,7 +132,11 @@ def volatility_group(close: pd.Series, params: dict | None = None) -> dict:
     n_bb = params.get("bollinger_window", 20)
     k = params.get("bollinger_k", 2.0)
     n_vol = params.get("volatility_window", 20)
+    bb_res = bollinger(close, n_bb, k)
+    vol_res = close_to_close_volatility(close, n_vol)
     return {
-        f"bollinger_{n_bb}_{k:g}": bollinger(close, n_bb, k),
-        f"close_to_close_volatility_{n_vol}": close_to_close_volatility(close, n_vol),
+        "bollinger": bb_res,
+        f"bollinger_{n_bb}_{k:g}": bb_res,
+        "close_to_close_vol": vol_res,
+        f"close_to_close_volatility_{n_vol}": vol_res,
     }

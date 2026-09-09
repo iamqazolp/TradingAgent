@@ -120,6 +120,9 @@ def compare(expected: Any, actual: Any) -> dict:
     actual = float(actual)
     if expected == 0.0 and actual == 0.0:
         return {"status": "pass", "expected": expected, "actual": actual, "relative": 0.0}
+    # Absolute tolerance: tiny floating-point artefacts near zero should not fail.
+    if abs(expected - actual) < 1e-9:
+        return {"status": "pass", "expected": expected, "actual": actual, "relative": 0.0}
     scale = max(abs(expected), abs(actual))
     relative = abs(expected - actual) / scale
     result = {

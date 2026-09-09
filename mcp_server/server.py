@@ -29,9 +29,14 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 from data import store
-from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary
+from indicators.comparison import compare_multiple_tickers
+from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary, multi_horizon_compute
+from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from mcp_server.tool_schemas import (
+    AnalyzeMultiHorizonInput,
+    CompareTickersInput,
     ComputeIndicatorsInput,
+    ComputeWeeklyInput,
     GetFlowSummaryInput,
     GetPriceDataInput,
     RowSource,
@@ -97,16 +102,26 @@ def audit(tool: str, arguments: dict, *, result: Any = None, error: str | None =
 
 
 def _compact(payload: Any) -> Any:
-    """Replace bulk row lists with a count so the audit log stays readable."""
+    """Replace bulk row lists with a count so the audit log stays readable.
+
+    Only truncates ``rows`` keys (the raw input data) and very large generic
+    lists (>200 items).  Indicator result arrays (typically ≤50 items) are
+    preserved in full so every number the agent quotes can be traced.
+    """
     if isinstance(payload, dict):
         out = {}
         for key, value in payload.items():
             if key == "rows" and isinstance(value, list):
                 out["rows"] = f"<{len(value)} rows>"
+            elif key == "ticker_data" and isinstance(value, dict):
+                out["ticker_data"] = {
+                    t: f"<{len(r)} rows>" if isinstance(r, list) else r
+                    for t, r in value.items()
+                }
             else:
                 out[key] = _compact(value)
         return out
-    if isinstance(payload, list) and len(payload) > 20:
+    if isinstance(payload, list) and len(payload) > 200:
         return f"<{len(payload)} items>"
     if isinstance(payload, list):
         return [_compact(v) for v in payload]
@@ -333,6 +348,222 @@ def get_flow_summary(
 
     result["ticker"] = resolved_ticker or _ticker_hint(request)
     audit("get_flow_summary", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Full multi-horizon analysis: daily + weekly indicators, "
+        "short/mid/long-term horizons, 3 conditional scenarios "
+        "(bullish/neutral/bearish), and investment strategy suggestions. "
+        "Use this for questions like 'phân tích đa khung VNM', "
+        "'chiến lược đầu tư HPG', or any request for short/mid/long-term analysis. "
+        "Loads rows server-side — just pass the ticker."
+    )
+)
+def analyze_multi_horizon(
+    ticker: str,
+    lookback_days: int = 500,
+    series_tail: int = 5,
+    weekly_series_tail: int = 5,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "ticker": ticker,
+        "lookback_days": lookback_days,
+        "series_tail": series_tail,
+        "weekly_series_tail": weekly_series_tail,
+    }
+    try:
+        params = AnalyzeMultiHorizonInput(
+            ticker=ticker,
+            lookback_days=lookback_days,
+            series_tail=series_tail,
+            weekly_series_tail=weekly_series_tail,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("analyze_multi_horizon", arguments, error=str(error), started=started)
+        raise error from exc
+
+    conn = store.connect()
+    try:
+        rows = store.get_recent(conn, params.ticker, params.lookback_days)
+        if not rows:
+            result = {
+                "error": "unknown_ticker",
+                "ticker": params.ticker,
+                "message": f"no stored rows for {params.ticker}",
+                "available_tickers": store.list_tickers(conn),
+            }
+            audit("analyze_multi_horizon", arguments, result=result, started=started)
+            return result
+    finally:
+        conn.close()
+
+    try:
+        result = multi_horizon_compute(
+            rows,
+            series_tail=params.series_tail,
+            weekly_series_tail=params.weekly_series_tail,
+            include_series=False,
+        )
+    except EngineError as exc:
+        audit("analyze_multi_horizon", arguments, error=str(exc), started=started)
+        raise ToolError(str(exc)) from exc
+
+    result["ticker"] = params.ticker
+    audit("analyze_multi_horizon", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Compute indicators on weekly-aggregated bars. Weekly bars are "
+        "derived from daily data (close = last close of the week, "
+        "volume/value/flow = sum of the week). Use for 'weekly RSI', "
+        "'weekly MACD', 'weekly trend' questions. Groups: "
+        + ", ".join(GROUPS) + "."
+    )
+)
+def compute_weekly_indicators(
+    ticker: str | None = None,
+    lookback_days: int = 500,
+    groups: list[str] | str | None = None,
+    series_tail: int = 26,
+    rows: list[dict] | str | None = None,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "ticker": ticker,
+        "lookback_days": lookback_days,
+        "groups": groups,
+        "series_tail": series_tail,
+        "rows": rows,
+    }
+    try:
+        request = ComputeWeeklyInput(
+            ticker=ticker,
+            lookback_days=lookback_days,
+            groups=groups or list(GROUPS),
+            series_tail=series_tail,
+            rows=rows,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("compute_weekly_indicators", arguments, error=str(error), started=started)
+        raise error from exc
+
+    resolved, resolved_ticker, problem = _load_rows(request)
+    if problem:
+        audit("compute_weekly_indicators", arguments, result=problem, started=started)
+        return problem
+
+    try:
+        from indicators.engine import rows_to_frame, _compute_core
+        frame = rows_to_frame(resolved)
+        weekly_frame = aggregate_weekly(frame)
+
+        _MIN_WEEKLY_BARS = 10
+        if len(weekly_frame) < _MIN_WEEKLY_BARS:
+            result = {
+                "error": "insufficient_weekly_data",
+                "weekly_bars_available": int(len(weekly_frame)),
+                "weekly_bars_min_required": _MIN_WEEKLY_BARS,
+                "message": (
+                    f"Only {len(weekly_frame)} weekly bars available "
+                    f"(need at least {_MIN_WEEKLY_BARS}). "
+                    f"Try increasing lookback_days (current: {request.lookback_days})."
+                ),
+            }
+            audit("compute_weekly_indicators", arguments, result=result, started=started)
+            return result
+
+        wf_clean = weekly_frame.dropna(subset=["prev_close"])
+        result = _compute_core(
+            wf_clean, request.groups, series_tail=request.series_tail,
+        )
+        result["timeframe"] = "weekly"
+        result["weekly_bars_used"] = int(len(wf_clean))
+
+        flags = weekly_quality_flags(weekly_frame)
+        if flags:
+            result["quality_flags"] = flags
+
+    except EngineError as exc:
+        audit("compute_weekly_indicators", arguments, error=str(exc), started=started)
+        raise ToolError(str(exc)) from exc
+
+    result["ticker"] = resolved_ticker or _ticker_hint(request)
+    result["groups_requested"] = list(request.groups)
+    audit("compute_weekly_indicators", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Compare 2 to 5 Vietnamese stock tickers head-to-head. "
+        "Returns 52-week performance tables (Return, High/Low with dates, "
+        "Max Drawdown, Avg Volume/Value), Moving Average position table "
+        "(vs SMA 20/50/100/200 & EMA 20/50/200, RSI, MACD), Classic Pivot "
+        "Points table (PP, S1-S3, R1-R2), and relative technical strength evaluation. "
+        "Pure objective technical analysis, zero buy/sell advice."
+    )
+)
+def compare_tickers(
+    tickers: list[str] | str,
+    lookback_days: int = 250,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "tickers": tickers,
+        "lookback_days": lookback_days,
+    }
+    try:
+        params = CompareTickersInput(
+            tickers=tickers,
+            lookback_days=lookback_days,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("compare_tickers", arguments, error=str(error), started=started)
+        raise error from exc
+
+    conn = store.connect()
+    ticker_data = {}
+    missing_tickers = []
+    try:
+        available = store.list_tickers(conn)
+        for t in params.tickers:
+            if t not in available:
+                missing_tickers.append(t)
+            else:
+                rows = store.get_recent(conn, t, params.lookback_days)
+                ticker_data[t] = rows
+    finally:
+        conn.close()
+
+    if missing_tickers:
+        result = {
+            "error": "tickers_not_found",
+            "missing_tickers": missing_tickers,
+            "available_tickers": available,
+            "message": f"Tickers not found in store: {', '.join(missing_tickers)}",
+        }
+        audit("compare_tickers", arguments, result=result, started=started)
+        return result
+
+    try:
+        result = compare_multiple_tickers(
+            ticker_data,
+            window_days=params.lookback_days,
+            include_series=False,
+        )
+    except EngineError as exc:
+        audit("compare_tickers", arguments, error=str(exc), started=started)
+        raise ToolError(str(exc)) from exc
+
+    audit("compare_tickers", arguments, result=result, started=started)
     return result
 
 

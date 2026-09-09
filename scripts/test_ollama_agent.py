@@ -84,12 +84,13 @@ def call_ollama_chat(
     tools: list[dict] | None = None,
     num_ctx: int = DEFAULT_NUM_CTX,
     temperature: float = 0.0,
+    stream: bool = True,
 ) -> dict:
     url = f"{OLLAMA_API_URL}/api/chat"
     payload: dict = {
         "model": model,
         "messages": messages,
-        "stream": False,
+        "stream": stream,
         "options": {
             "temperature": temperature,
             "num_ctx": num_ctx,
@@ -106,8 +107,34 @@ def call_ollama_chat(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            if not stream:
+                return json.loads(resp.read().decode("utf-8"))
+
+            full_content = []
+            tool_calls = []
+            for line in resp:
+                if not line:
+                    continue
+                chunk = json.loads(line.decode("utf-8"))
+                msg = chunk.get("message", {})
+                c = msg.get("content", "")
+                if c:
+                    print(c, end="", flush=True)
+                    full_content.append(c)
+                tc = msg.get("tool_calls")
+                if tc:
+                    tool_calls.extend(tc)
+
+            if full_content:
+                print()  # newline after streamed tokens
+            return {
+                "message": {
+                    "role": "assistant",
+                    "content": "".join(full_content),
+                    "tool_calls": tool_calls or None,
+                }
+            }
     except urllib.error.URLError as e:
         print(f"\n[ERROR] Failed to connect to Ollama at {url}: {e}", file=sys.stderr)
         print("Ensure Ollama is running: `ollama serve` or open Ollama app.\n", file=sys.stderr)
@@ -137,17 +164,15 @@ async def execute_agent_turn(
 
     while step < max_steps:
         step += 1
-        print(f"\n[Step {step}] Sending request to {model} (num_ctx={num_ctx}, temp={temperature})...")
+        print(f"\n[Step {step}] Sending request to {model} (num_ctx={num_ctx}, temp={temperature})...\n")
         response = call_ollama_chat(model, messages, tools, num_ctx=num_ctx, temperature=temperature)
         msg = response.get("message", {})
         messages.append(msg)
 
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
-            # Model finished reasoning and produced final content
+            # Model finished reasoning and produced final content (streamed above)
             final_text = msg.get("content", "").strip()
-            print(f"\n[Final Response from {model}]:\n")
-            print(final_text)
             return final_text
 
         # Execute each requested tool call against the MCP server

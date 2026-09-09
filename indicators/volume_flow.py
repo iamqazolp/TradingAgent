@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from indicators import finite, insufficient, latest, require, safe_series_div
+from indicators import finite, insufficient, latest, require, safe_div, safe_series_div
 
 #: Relative tolerance when cross-checking `prev_close` against the prior close.
 PREV_CLOSE_TOLERANCE = 0.005
@@ -159,6 +159,7 @@ def volume_ratio(df: pd.DataFrame, window: int = 20) -> dict:
     vol_sma = vol.shift(1).rolling(window, min_periods=window).mean()
     ratio = safe_series_div(vol, vol_sma).rename(f"volume_ratio_{window}")
     ratio_now = latest(ratio)
+    pct_of_average = round(ratio_now * 100, 2) if ratio_now is not None else None
     flag = "normal"
     if ratio_now is not None:
         if ratio_now >= 2.0:
@@ -172,9 +173,78 @@ def volume_ratio(df: pd.DataFrame, window: int = 20) -> dict:
     return {
         "window": window,
         "latest": ratio_now,
+        "pct_of_average": pct_of_average,
         "flag": flag,
         "series": ratio,
     }
+
+
+def volume_spikes(df: pd.DataFrame, threshold: float = 1.5) -> dict:
+    """Count sessions where volume exceeded `threshold` * 20-day SMA.
+
+    Counts over 20 and 60 sessions, broken down by up-day vs down-day.
+    """
+    if len(df) < 22:
+        return {"spikes_20d": {"total": 0, "up": 0, "down": 0}, "spikes_60d": {"total": 0, "up": 0, "down": 0}}
+
+    vol = pd.to_numeric(df["total_volume"], errors="coerce")
+    close = pd.to_numeric(df["close"], errors="coerce")
+    prev_close = pd.to_numeric(df["prev_close"], errors="coerce")
+    sma20 = vol.shift(1).rolling(20, min_periods=20).mean()
+    is_spike = vol > (sma20 * threshold)
+    is_up = close > prev_close
+    is_down = close < prev_close
+
+    def count_in_window(w: int) -> dict:
+        sub_spike = is_spike.tail(w)
+        sub_up = is_up.tail(w)
+        sub_down = is_down.tail(w)
+        total = int((sub_spike).sum())
+        up_cnt = int((sub_spike & sub_up).sum())
+        down_cnt = int((sub_spike & sub_down).sum())
+        return {"total": total, "up": up_cnt, "down": down_cnt}
+
+    return {
+        "spikes_20d": count_in_window(20),
+        "spikes_60d": count_in_window(min(60, len(df))),
+    }
+
+
+def obv_divergence(df: pd.DataFrame, obv_res: dict) -> dict:
+    """Analyze OBV vs Price divergence over multiple windows (20, 60 rows)."""
+    if not isinstance(obv_res, dict) or "obv_series" not in obv_res:
+        return {"divergence_20d": "insufficient_data", "divergence_60d": "insufficient_data"}
+
+    obv_s = obv_res["obv_series"]
+    close = pd.to_numeric(df["close"], errors="coerce")
+    out: dict[str, Any] = {}
+
+    for w in (20, 60, 52):
+        if len(close) <= w or len(obv_s.dropna()) <= w:
+            out[f"divergence_{w}"] = "insufficient_data"
+            continue
+        _base = float(close.iloc[-1 - w])
+        p_chg_raw = safe_div(close.iloc[-1] - _base, _base)
+        p_chg = p_chg_raw * 100.0 if p_chg_raw is not None else 0.0
+        o_chg = (obv_s.iloc[-1] - obv_s.iloc[-1 - w]) / 1e6  # million shares
+
+        if p_chg > 2.0 and o_chg < -1.0:
+            div = "bearish_divergence"
+            desc = f"Giá tăng (+{p_chg:.1f}%) nhưng OBV giảm ({o_chg:.1f}M cp) — phân kỳ âm cảnh báo cạn lực cầu"
+        elif p_chg < -2.0 and o_chg > 1.0:
+            div = "bullish_divergence"
+            desc = f"Giá giảm ({p_chg:.1f}%) nhưng OBV tăng (+{o_chg:.1f}M cp) — phân kỳ dương cho thấy có lực gom ngầm"
+        else:
+            div = "in_sync"
+            desc = "Biến động giá và OBV đồng pha"
+
+        out[f"divergence_{w}"] = {
+            "status": div,
+            "description": desc,
+            "price_pct_change": round(p_chg, 2),
+            "obv_change_mil": round(o_chg, 2),
+        }
+    return out
 
 
 def volume_flow_group(df: pd.DataFrame, params: dict | None = None) -> dict:
@@ -182,9 +252,14 @@ def volume_flow_group(df: pd.DataFrame, params: dict | None = None) -> dict:
     params = params or {}
     window = params.get("flow_window", 5)
     vol_window = params.get("volume_ratio_window", 20)
+    obv_val = obv(df, params.get("prev_close_tolerance", PREV_CLOSE_TOLERANCE))
     return {
+        "buy_sell_volume_imbalance": buy_sell_volume_imbalance(df, window),
         f"buy_sell_volume_imbalance_{window}": buy_sell_volume_imbalance(df, window),
-        "obv": obv(df, params.get("prev_close_tolerance", PREV_CLOSE_TOLERANCE)),
+        "obv": obv_val,
+        "volume_ratio": volume_ratio(df, vol_window),
         f"volume_ratio_{vol_window}": volume_ratio(df, vol_window),
+        "volume_spikes": volume_spikes(df),
+        "obv_divergence": obv_divergence(df, obv_val),
     }
 
