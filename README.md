@@ -135,19 +135,42 @@ and that the value quoted back also appears in `logs/tool_calls.jsonl`.
 | `get_price_data(ticker, lookback_days=300, start, end)` | raw stored rows, oldest first. `lookback_days` counts trading rows, not calendar days |
 | `compute_indicators(ticker \| rows, groups, params, series_tail)` | the seven indicator groups |
 | `get_flow_summary(ticker \| rows, window=5)` | the cheap flow-only answer |
-| `analyze_multi_horizon(ticker, lookback_days=500, detail="compact")` | the full report: daily + weekly, three horizons, levels, 52-week stats, scenarios |
+| `analyze_multi_horizon(ticker, lookback_days=500, scope="full", detail="compact")` | the analysis report, scoped to the question |
 | `compute_weekly_indicators(ticker \| rows, groups, series_tail=26)` | indicator groups on weekly bars only |
 | `compare_tickers(tickers, lookback_days=250, detail="compact")` | 2–5 tickers head to head |
 
 Groups: `trend`, `momentum`, `volatility`, `volume_flow`, `trade_flow`,
 `value_flow`, `foreign_flow`.
 
-`detail="compact"` (the default on the two large tools) omits fields that
-duplicate data present elsewhere in the same response. It cuts
-`analyze_multi_horizon` from ~17k to ~14k tokens and `compare_tickers` on three
-tickers from ~13k to ~7.6k, which matters when the consumer is a locally hosted
-model holding the skill prompt, the payload and its own report in one context
-window. `detail="full"` restores every field.
+### Two independent ways the payload is kept small
+
+Both matter because the consumer is a locally hosted model holding the skill
+prompt, the tool payload and its own report in one context window.
+
+**`scope` — compute only what the question needs.** Answering "phân tích ngắn
+hạn VNM" with the full report spends about 73% of its tokens on weekly bars,
+52-week statistics and two unused horizons, and pays to compute them. Each scope
+declares its own inputs:
+
+| `scope` | For | Payload vs `full` |
+|---|---|---|
+| `full` | phân tích toàn diện / đa khung — all three horizons, scenarios, 52-week stats | 100% (~14k tokens) |
+| `short_term` | ngắn hạn only. Skips weekly aggregation entirely | 43% |
+| `mid_term` | trung hạn only, with weekly SMA20 confirmation | 63% |
+| `long_term` | dài hạn only, plus 52-week stats | 57% |
+| `levels` | hỗ trợ / kháng cự and current price position only | 23% (~3.3k tokens) |
+
+Sections a scope skips are named in `sections_omitted`, with a note stating they
+were **not requested** rather than unavailable — otherwise a report would say
+"chưa đủ dữ liệu" about data that was never asked for. Scenarios are dropped from
+single-horizon scopes on purpose: their `likelihood` counts *agreeing horizons*,
+so "cao (1/1)" from one horizon would read as a three-horizon consensus.
+
+**`detail` — drop fields duplicated elsewhere in the same response.**
+`"compact"` (the default) cuts `analyze_multi_horizon` from ~17k to ~14k tokens
+and `compare_tickers` on three tickers from ~13k to ~7.6k (32.6k of its 40k
+characters were a per-ticker indicator dump no table reads). `"full"` restores
+every field.
 
 ## The interpretation layer
 

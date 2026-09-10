@@ -1046,15 +1046,21 @@ def _long_term(daily: dict, weekly: dict | None, close: float, levels: dict | No
 # --------------------------------------------------------------------------- alignment
 
 
-def _horizon_alignment(short: dict, mid: dict, long: dict) -> dict:
-    """Assess agreement across the three horizons.
+def _horizon_alignment(
+    short: dict,
+    mid: dict,
+    long: dict,
+    which: tuple[str, ...] = ("short_term", "mid_term", "long_term"),
+) -> dict:
+    """Assess agreement across the computed horizons.
 
     Returns a structured verdict rather than one of a dozen compound string
     labels, several of which were unreachable. The caller gets each horizon's
     direction explicitly, so it can describe any combination without this
     function having to enumerate them.
     """
-    order = (("short_term", short), ("mid_term", mid), ("long_term", long))
+    available = {"short_term": short, "mid_term": mid, "long_term": long}
+    order = tuple((name, available[name]) for name in which if available.get(name))
 
     def direction_of(horizon: dict) -> int | None:
         strength = horizon.get("signal_strength", "neutral")
@@ -1126,9 +1132,13 @@ def _horizon_alignment(short: dict, mid: dict, long: dict) -> dict:
         "per_horizon_confidence": {
             name: h.get("confidence") for name, h in order
         },
+        # Only warn about shared inputs when the two horizons that share them
+        # were both computed; otherwise the caveat describes nothing.
         "shared_input_caveat": (
             "Ngắn hạn và trung hạn cùng dùng RSI/MACD khung ngày, nên đồng thuận giữa hai "
             "khung này không phải hai bằng chứng độc lập. Dài hạn dựa chủ yếu vào khung tuần."
+            if {"short_term", "mid_term"} <= set(which)
+            else "Các khung được tính dùng bộ chỉ báo khác nhau."
         ),
     }
 
@@ -1144,6 +1154,7 @@ def horizon_analysis(
     weekly_compute: dict | None,
     latest_close: float,
     levels: dict | None = None,
+    which: tuple[str, ...] = ("short_term", "mid_term", "long_term"),
 ) -> dict:
     """Produce a three-horizon technical analysis.
 
@@ -1160,11 +1171,17 @@ def horizon_analysis(
     levels
         Output of :func:`indicators.levels.key_levels`, used to attach a real
         invalidation level to each horizon. Optional.
+    which
+        Which horizons to compute. A scoped request ("phân tích ngắn hạn") only
+        needs one, and computing the other two costs both tokens and time.
+        Cross-horizon agreement is only reported when at least two were asked
+        for — an "alignment" over a single horizon would be meaningless.
 
     Returns
     -------
     dict
-        ``short_term``, ``mid_term``, ``long_term``, plus ``horizon_alignment``.
+        One entry per requested horizon, plus ``alignment`` and
+        ``horizon_alignment`` when two or more were computed.
     """
     if latest_close is None:
         return {
@@ -1172,15 +1189,40 @@ def horizon_analysis(
             "message": "Cannot perform horizon analysis without a close price.",
         }
 
-    short = _short_term(daily_compute, latest_close, levels)
-    mid = _mid_term(daily_compute, weekly_compute, latest_close, levels)
-    long = _long_term(daily_compute, weekly_compute, latest_close, levels)
-    alignment = _horizon_alignment(short, mid, long)
-
-    return {
-        "short_term": short,
-        "mid_term": mid,
-        "long_term": long,
-        "horizon_alignment": alignment["label"],
-        "alignment": alignment,
+    builders = {
+        "short_term": lambda: _short_term(daily_compute, latest_close, levels),
+        "mid_term": lambda: _mid_term(daily_compute, weekly_compute, latest_close, levels),
+        "long_term": lambda: _long_term(daily_compute, weekly_compute, latest_close, levels),
     }
+    unknown = [name for name in which if name not in builders]
+    if unknown:
+        raise ValueError(f"unknown horizon(s): {', '.join(unknown)}")
+
+    out: dict[str, Any] = {name: builders[name]() for name in which}
+    out["horizons_computed"] = list(which)
+
+    if len(which) >= 2:
+        alignment = _horizon_alignment(
+            out.get("short_term") or {},
+            out.get("mid_term") or {},
+            out.get("long_term") or {},
+            which=which,
+        )
+        out["horizon_alignment"] = alignment["label"]
+        out["alignment"] = alignment
+    else:
+        only = which[0] if which else None
+        out["horizon_alignment"] = "single_horizon_scope"
+        out["alignment"] = {
+            "label": "single_horizon_scope",
+            "summary": (
+                f"Chỉ khung {_VI.get(only, only)} được yêu cầu — không đánh giá "
+                "đồng thuận đa khung trong scope này."
+            ),
+            "horizons_scored": 1 if only else 0,
+            "note": (
+                "Không có kết luận đa khung vì các khung khác không được tính "
+                "(không phải thiếu dữ liệu)."
+            ),
+        }
+    return out

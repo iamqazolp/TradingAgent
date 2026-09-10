@@ -204,6 +204,24 @@ def test_skill_file_forbids_rendering_likelihood_as_percent():
     assert "KHÔNG quy đổi thành %" in text or "KHÔNG đổi thành %" in text
 
 
+def test_skill_file_documents_every_scope_that_exists():
+    """The routing table must cover the real scope enum, no more and no less.
+
+    A scope the skill never mentions is dead capability; a scope the skill names
+    but the tool rejects is a guaranteed tool error at runtime.
+    """
+    from indicators.engine import SCOPES
+
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    for scope in SCOPES:
+        assert f"`{scope}`" in text or f'"{scope}"' in text or f"'{scope}'" in text, (
+            f"SKILL.md never mentions scope '{scope}'"
+        )
+    # And it must tell the model that omitted sections are not missing data.
+    assert "sections_omitted" in text
+    assert "KHÔNG phải thiếu dữ liệu" in text
+
+
 def test_skill_file_documents_the_tools_that_exist():
     text = SKILL_PATH.read_text(encoding="utf-8")
     for tool in (

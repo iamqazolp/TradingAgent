@@ -330,6 +330,82 @@ _HORIZON_REDUNDANT_KEYS: tuple[str, ...] = (
 #: them; computing all seven roughly doubled the weekly payload.
 _COMPACT_WEEKLY_GROUPS: tuple[str, ...] = ("trend", "momentum", "volatility")
 
+#: Daily groups every scope needs: the trend/momentum/volatility trio feeds the
+#: MA tables, the oscillators and the Bollinger levels.
+_CORE_DAILY_GROUPS: tuple[str, ...] = ("trend", "momentum", "volatility")
+
+#: Query scopes for :func:`multi_horizon_compute`.
+#:
+#: A single analysis request does not need every section. Answering "phân tích
+#: ngắn hạn VNM" with the full payload spends about 73% of its tokens on weekly
+#: bars, 52-week statistics and two unused horizons — and pays to compute them.
+#: Each scope names exactly what it needs so the work and the payload both shrink.
+#:
+#: Scenarios are omitted from single-horizon scopes on purpose: their
+#: ``likelihood`` counts *agreeing horizons*, so "cao (1/1)" computed from one
+#: horizon would read as a three-horizon consensus. The horizon's own
+#: ``invalidation`` and the matching ``strategies`` entry carry the same levels
+#: without that implication.
+SCOPES: dict[str, dict[str, Any]] = {
+    "full": {
+        "description_vi": "Phân tích toàn diện: cả ba khung, kịch bản, thống kê 52 tuần",
+        "horizons": ("short_term", "mid_term", "long_term"),
+        "daily_groups": GROUPS,
+        "weekly": True,
+        "stats_52w": True,
+        "scenarios": True,
+        "strategies": True,
+        "levels": True,
+    },
+    "short_term": {
+        "description_vi": "Chỉ khung ngắn hạn (1–4 tuần)",
+        "horizons": ("short_term",),
+        "daily_groups": _CORE_DAILY_GROUPS + ("volume_flow", "trade_flow", "foreign_flow"),
+        "weekly": False,
+        "stats_52w": False,
+        "scenarios": False,
+        "strategies": True,
+        "levels": True,
+    },
+    "mid_term": {
+        "description_vi": "Chỉ khung trung hạn (1–3 tháng), có xác nhận khung tuần",
+        "horizons": ("mid_term",),
+        "daily_groups": _CORE_DAILY_GROUPS + ("volume_flow", "trade_flow", "foreign_flow"),
+        "weekly": True,  # the mid-term view uses weekly SMA20 as confirmation
+        "stats_52w": False,
+        "scenarios": False,
+        "strategies": True,
+        "levels": True,
+    },
+    "long_term": {
+        "description_vi": "Chỉ khung dài hạn (> 3 tháng), chủ yếu khung tuần",
+        "horizons": ("long_term",),
+        "daily_groups": _CORE_DAILY_GROUPS + ("foreign_flow",),
+        "weekly": True,
+        "stats_52w": True,
+        "scenarios": False,
+        "strategies": True,
+        "levels": True,
+    },
+    "levels": {
+        "description_vi": "Chỉ các mốc hỗ trợ / kháng cự và vị thế giá hiện tại",
+        "horizons": (),
+        "daily_groups": _CORE_DAILY_GROUPS,
+        "weekly": False,
+        "stats_52w": False,
+        "scenarios": False,
+        "strategies": False,
+        "levels": True,
+    },
+}
+
+#: What each scope deliberately does not compute, phrased for the report so a
+#: consumer never mistakes "not requested" for "not enough data".
+_SCOPE_OMISSION_NOTE = (
+    "Các mục dưới đây KHÔNG được tính trong scope '{scope}' vì không cần cho câu hỏi "
+    "này — đây KHÔNG phải là thiếu dữ liệu: {omitted}. Nếu cần, gọi lại với scope='full'."
+)
+
 
 def compact_multi_horizon(result: dict) -> dict:
     """Drop fields that repeat data present elsewhere in the same payload.
@@ -372,114 +448,163 @@ def multi_horizon_compute(
     weekly_series_tail: int = 5,
     include_series: bool = False,
     detail: str = "compact",
+    scope: str = "full",
 ) -> dict:
-    """Full multi-horizon analysis: daily + weekly indicators, horizons,
-    scenarios, and investment strategies.
+    """Multi-horizon analysis, scoped to what the question needs.
 
-    This is the "super-compute" entry point that the ``analyze_multi_horizon``
-    MCP tool calls.  It orchestrates:
+    This is the entry point the ``analyze_multi_horizon`` MCP tool calls. It
+    orchestrates, for the sections the chosen ``scope`` asks for:
 
-    1. Daily indicator computation (all groups)
-    2. Weekly bar aggregation from daily data
-    3. Weekly indicator computation (all groups, if enough bars)
-    4. Three-horizon investment analysis (short / mid / long term)
-    5. Scenario generation (bullish / neutral / bearish)
-    6. Strategy suggestions per horizon
+    1. Daily indicator computation
+    2. Weekly bar aggregation and weekly indicators
+    3. Support / resistance levels
+    4. Horizon analysis (short / mid / long term)
+    5. Scenario generation
+    6. Technical perspectives per horizon
+    7. 52-week statistics
 
     Parameters
     ----------
     rows
         Daily row dicts, same format as :func:`compute`.
-    series_tail
-        How many daily data points to include in series output (default 5).
-    weekly_series_tail
-        How many weekly data points to include in series output (default 5).
+    series_tail, weekly_series_tail
+        How many data points of each series to include.
     include_series
-        Whether to keep raw float series arrays. If False (default), series
-        arrays are pruned to keep LLM context light.
+        Whether to keep raw float series arrays. False (default) prunes them.
     detail
         ``"compact"`` (default) removes fields that duplicate data present
-        elsewhere in the response, roughly halving the payload for a locally
-        hosted model. ``"full"`` keeps every field.
+        elsewhere in the response. ``"full"`` keeps every field.
+    scope
+        One of :data:`SCOPES`. ``"full"`` (default) computes everything;
+        ``"short_term"``, ``"mid_term"`` and ``"long_term"`` compute one horizon
+        and only the inputs it uses; ``"levels"`` returns support/resistance
+        alone. Sections a scope skips are named in ``sections_omitted`` so a
+        consumer can tell "not requested" from "not enough data".
 
     Returns
     -------
     dict
-        Keys: ``daily``, ``weekly``, ``horizons``, ``scenarios``,
-        ``strategies``, plus metadata.
+        ``daily`` and ``levels`` always; ``weekly``, ``horizons``,
+        ``scenarios``, ``strategies`` and ``stats_52w`` when the scope includes
+        them, plus ``scope``, ``scope_description`` and ``sections_omitted``.
     """
-    # 1. Build daily frame and compute daily indicators
+    plan = SCOPES.get(scope)
+    if plan is None:
+        raise EngineError(
+            f"unknown scope {scope!r}; valid scopes are {', '.join(SCOPES)}"
+        )
+
+    # 1. Daily frame and daily indicators, restricted to the groups this scope reads.
     frame = rows_to_frame(rows)
-    daily_result = _compute_core(
-        frame, GROUPS, series_tail=series_tail,
-    )
-
-    # 2. Aggregate daily → weekly
-    weekly_frame = aggregate_weekly(frame)
-    weekly_result = None
-    weekly_flags = []
-
-    # Need at least ~14 weekly bars for RSI(14) to produce a value
-    _MIN_WEEKLY_BARS = 14
-    weekly_groups = GROUPS if detail == "full" else _COMPACT_WEEKLY_GROUPS
-    if len(weekly_frame) >= _MIN_WEEKLY_BARS:
-        # Drop rows with NaN prev_close (first week) for clean computation
-        wf_clean = weekly_frame.dropna(subset=["prev_close"])
-        if len(wf_clean) >= _MIN_WEEKLY_BARS:
-            weekly_result = _compute_core(
-                wf_clean, weekly_groups, series_tail=weekly_series_tail,
-            )
-            weekly_result["timeframe"] = "weekly"
-            weekly_flags = weekly_quality_flags(weekly_frame)
-            if weekly_flags:
-                weekly_result["quality_flags"] = weekly_flags
-
+    daily_groups = plan["daily_groups"] if detail != "full" else GROUPS
+    daily_result = _compute_core(frame, daily_groups, series_tail=series_tail)
     daily_result["timeframe"] = "daily"
+    daily_result["groups_computed"] = list(daily_groups)
 
-    # 3. Support / resistance levels, built from close structure, MAs and bands.
-    #    Computed before the horizons because each horizon attaches a real
-    #    invalidation level taken from here rather than inventing one.
+    # 2. Weekly bars, only when a requested horizon actually uses them.
+    _MIN_WEEKLY_BARS = 14
+    weekly_frame = None
+    weekly_result = None
+    if plan["weekly"]:
+        weekly_frame = aggregate_weekly(frame)
+        weekly_groups = GROUPS if detail == "full" else _COMPACT_WEEKLY_GROUPS
+        if len(weekly_frame) >= _MIN_WEEKLY_BARS:
+            # Drop rows with NaN prev_close (first week) for clean computation
+            wf_clean = weekly_frame.dropna(subset=["prev_close"])
+            if len(wf_clean) >= _MIN_WEEKLY_BARS:
+                weekly_result = _compute_core(
+                    wf_clean, weekly_groups, series_tail=weekly_series_tail,
+                )
+                weekly_result["timeframe"] = "weekly"
+                flags = weekly_quality_flags(weekly_frame)
+                if flags:
+                    weekly_result["quality_flags"] = flags
+
+    # 3. Support / resistance levels. Computed before the horizons because each
+    #    horizon attaches a real invalidation level taken from here rather than
+    #    inventing one.
     levels = key_levels(
         frame,
         daily_result.get("groups", {}).get("trend"),
         daily_result.get("groups", {}).get("volatility"),
     )
 
-    # 4. Multi-horizon analysis
     latest_close = daily_result.get("latest_close")
-    horizons = horizon_analysis(daily_result, weekly_result, latest_close, levels)
 
-    # 5. Scenario generation
-    scenarios = generate_scenarios(
-        daily_result, weekly_result, horizons, latest_close, levels,
-    )
-
-    # 6. Technical perspectives per horizon
-    strategies = suggest_strategies(
-        horizons, scenarios, latest_close, daily_result, levels,
-    )
-
-    # 7. 52-week stats
-    s52 = stats_52w(frame, window=min(250, len(frame)))
-
-    result = {
+    result: dict[str, Any] = {
         "analysis_type": "multi_horizon",
-        "daily": daily_result,
-        "weekly": weekly_result,
-        "weekly_bars_available": int(len(weekly_frame)),
-        "weekly_bars_min_required": _MIN_WEEKLY_BARS,
-        "horizons": horizons,
-        "scenarios": scenarios,
-        "strategies": strategies,
-        "stats_52w": s52,
-        "levels": levels,
+        "scope": scope,
+        "scope_description": plan["description_vi"],
         "detail": detail,
+        "daily": daily_result,
+        "levels": levels,
     }
+
+    # 4. Horizons
+    horizons = None
+    if plan["horizons"]:
+        horizons = horizon_analysis(
+            daily_result, weekly_result, latest_close, levels,
+            which=plan["horizons"],
+        )
+        result["horizons"] = horizons
+
+    if plan["weekly"]:
+        result["weekly"] = weekly_result
+        result["weekly_bars_available"] = int(len(weekly_frame))
+        result["weekly_bars_min_required"] = _MIN_WEEKLY_BARS
+
+    # 5. Scenarios: multi-horizon by construction, so only for multi-horizon scopes.
+    scenarios = None
+    if plan["scenarios"] and horizons:
+        scenarios = generate_scenarios(
+            daily_result, weekly_result, horizons, latest_close, levels,
+        )
+        result["scenarios"] = scenarios
+
+    # 6. Technical perspectives for the horizons that were computed
+    if plan["strategies"] and horizons:
+        result["strategies"] = suggest_strategies(
+            horizons, scenarios or {}, latest_close, daily_result, levels,
+            which=plan["horizons"],
+        )
+
+    # 7. 52-week statistics
+    if plan["stats_52w"]:
+        result["stats_52w"] = stats_52w(frame, window=min(250, len(frame)))
+
+    omitted = _omitted_sections(plan, daily_groups)
+    if omitted:
+        result["sections_omitted"] = omitted
+        result["sections_omitted_note"] = _SCOPE_OMISSION_NOTE.format(
+            scope=scope, omitted=", ".join(omitted)
+        )
+
     if not include_series:
         result = prune_series(result)
     if detail != "full":
         result = compact_multi_horizon(result)
     return result
+
+
+def _omitted_sections(plan: dict, daily_groups) -> list[str]:
+    """Name what this scope did not compute, for the report to pass along."""
+    omitted: list[str] = []
+    for name in ("short_term", "mid_term", "long_term"):
+        if name not in plan["horizons"]:
+            omitted.append(f"horizons.{name}")
+    if not plan["weekly"]:
+        omitted.append("weekly")
+    if not plan["stats_52w"]:
+        omitted.append("stats_52w")
+    if not plan["scenarios"]:
+        omitted.append("scenarios")
+    if not plan["strategies"]:
+        omitted.append("strategies")
+    for group in GROUPS:
+        if group not in daily_groups:
+            omitted.append(f"daily.groups.{group}")
+    return omitted
 
 
 def flow_summary(rows: list[dict], window: int = 5) -> dict:

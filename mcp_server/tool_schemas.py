@@ -272,6 +272,21 @@ class AnalyzeMultiHorizonInput(BaseModel):
             "everything — only needed when a caller wants the redundant copies."
         ),
     )
+    scope: Literal["full", "short_term", "mid_term", "long_term", "levels"] = Field(
+        default="full",
+        description=(
+            "Which sections to compute, matched to the question being asked. "
+            "'full' = comprehensive analysis, all three horizons (phân tích toàn diện). "
+            "'short_term' = only the short-term horizon (ngắn hạn, 1-4 weeks). "
+            "'mid_term' = only the mid-term horizon (trung hạn, 1-3 months). "
+            "'long_term' = only the long-term horizon (dài hạn, over 3 months). "
+            "'levels' = only support/resistance levels and current price position "
+            "(hỗ trợ kháng cự). "
+            "A scoped call is much cheaper: 'short_term' is ~43% and 'levels' ~23% "
+            "of the full payload. Sections a scope skips are listed in "
+            "`sections_omitted` — they are NOT missing data."
+        ),
+    )
 
     @field_validator("ticker")
     @classmethod
@@ -286,6 +301,33 @@ class AnalyzeMultiHorizonInput(BaseModel):
             cleaned = value.strip().strip("'\"").lower()
             return cleaned or "compact"
         return value
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _normalize_scope(cls, value: Any) -> Any:
+        """Accept the shapes a local model is likely to send for the scope."""
+        if not isinstance(value, str):
+            return value
+        cleaned = value.strip().strip("'\"").lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "": "full",
+            "all": "full",
+            "comprehensive": "full",
+            "short": "short_term",
+            "shortterm": "short_term",
+            "ngan_han": "short_term",
+            "mid": "mid_term",
+            "midterm": "mid_term",
+            "medium": "mid_term",
+            "medium_term": "mid_term",
+            "trung_han": "mid_term",
+            "long": "long_term",
+            "longterm": "long_term",
+            "dai_han": "long_term",
+            "level": "levels",
+            "support_resistance": "levels",
+        }
+        return aliases.get(cleaned, cleaned)
 
 
 class ComputeWeeklyInput(GroupSelection):

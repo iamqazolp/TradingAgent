@@ -14,6 +14,8 @@ are gone, and an absent level is now reported as absent.
 
 from __future__ import annotations
 
+from typing import Any
+
 from indicators import finite, is_insufficient
 
 _DISCLAIMER = (
@@ -32,33 +34,48 @@ _VN_MARKET_RULES = {
 }
 
 
+_LABELS_VI = {
+    "short_term": "ngắn hạn",
+    "mid_term": "trung hạn",
+    "long_term": "dài hạn",
+}
+
+
 def suggest_strategies(
     horizons: dict,
     scenarios: dict,
     latest_close: float,
     daily_compute: dict,
     levels: dict | None = None,
+    which: tuple[str, ...] = ("short_term", "mid_term", "long_term"),
 ) -> dict:
-    """Technical perspective and observation levels for each horizon."""
+    """Technical perspective and observation levels for each computed horizon.
+
+    ``which`` mirrors the horizons that were actually computed. Emitting an
+    empty perspective for a horizon nobody asked for would read as a horizon
+    with no data.
+    """
     if latest_close is None or latest_close <= 0:
         return {"error": "invalid_close_price", "horizons": {}, "disclaimer": _DISCLAIMER}
 
-    short_h = horizons.get("short_term", {})
-    mid_h = horizons.get("mid_term", {})
-    long_h = horizons.get("long_term", {})
     alignment = horizons.get("alignment") or {}
 
-    return {
-        "short_term": _perspective(short_h, latest_close, levels, "ngắn hạn"),
-        "mid_term": _perspective(mid_h, latest_close, levels, "trung hạn"),
-        "long_term": _perspective(long_h, latest_close, levels, "dài hạn"),
-        "horizon_alignment": horizons.get("horizon_alignment", alignment.get("label")),
-        "technical_summary": alignment.get("summary")
-            or "Chưa đủ dữ liệu để tổng hợp đồng thuận đa khung.",
-        "shared_input_caveat": alignment.get("shared_input_caveat"),
-        "vn_market_rules": _VN_MARKET_RULES,
-        "disclaimer": _DISCLAIMER,
-    }
+    out: dict[str, Any] = {}
+    for name in which:
+        horizon = horizons.get(name)
+        if not horizon:
+            continue
+        out[name] = _perspective(horizon, latest_close, levels, _LABELS_VI.get(name, name))
+
+    out["horizons_covered"] = [name for name in which if name in out]
+    out["horizon_alignment"] = horizons.get("horizon_alignment", alignment.get("label"))
+    out["technical_summary"] = (
+        alignment.get("summary") or "Chưa đủ dữ liệu để tổng hợp đồng thuận đa khung."
+    )
+    out["shared_input_caveat"] = alignment.get("shared_input_caveat")
+    out["vn_market_rules"] = _VN_MARKET_RULES
+    out["disclaimer"] = _DISCLAIMER
+    return out
 
 
 def _nearest(levels: dict | None, side: str) -> dict | None:

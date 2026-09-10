@@ -382,19 +382,26 @@ def get_flow_summary(
 
 @server.tool(
     description=(
-        "Full multi-horizon technical analysis of one ticker. Returns daily and "
-        "weekly indicators plus, for each of the short / mid / long-term horizons "
-        "(ngắn / trung / dài hạn), a verdict, a confidence level with its reason, "
-        "the scored evidence per indicator group, conflicting signals, and an "
-        "invalidation level. Also returns measured support/resistance levels, "
-        "52-week statistics and three conditional scenarios. "
-        "Use for 'phân tích VNM', 'phân tích đa khung', or any short/mid/long-term "
-        "request. Loads rows server-side — just pass the ticker."
+        "Multi-horizon technical analysis of one ticker, scoped to the question. "
+        "For each requested horizon (ngắn / trung / dài hạn) it returns a verdict, "
+        "a confidence level with its reason, the scored evidence per indicator "
+        "group, conflicting signals and an invalidation level, plus daily "
+        "indicators and support/resistance levels measured from closes.\n"
+        "SET `scope` TO MATCH THE QUESTION — a scoped call is far cheaper:\n"
+        "  scope='full'       phân tích toàn diện / đa khung (all 3 horizons, "
+        "scenarios, 52-week stats)\n"
+        "  scope='short_term' ngắn hạn only (~43% of full)\n"
+        "  scope='mid_term'   trung hạn only\n"
+        "  scope='long_term'  dài hạn only\n"
+        "  scope='levels'     hỗ trợ / kháng cự only (~23% of full)\n"
+        "Sections a scope skips are named in `sections_omitted` and are NOT "
+        "missing data. Loads rows server-side — just pass the ticker."
     )
 )
 def analyze_multi_horizon(
     ticker: str,
     lookback_days: int = 500,
+    scope: str = "full",
     series_tail: int = 5,
     weekly_series_tail: int = 5,
     detail: str = "compact",
@@ -403,6 +410,7 @@ def analyze_multi_horizon(
     arguments = {
         "ticker": ticker,
         "lookback_days": lookback_days,
+        "scope": scope,
         "series_tail": series_tail,
         "weekly_series_tail": weekly_series_tail,
         "detail": detail,
@@ -411,6 +419,7 @@ def analyze_multi_horizon(
         params = AnalyzeMultiHorizonInput(
             ticker=ticker,
             lookback_days=lookback_days,
+            scope=scope,
             series_tail=series_tail,
             weekly_series_tail=weekly_series_tail,
             detail=detail,
@@ -442,6 +451,7 @@ def analyze_multi_horizon(
             weekly_series_tail=params.weekly_series_tail,
             include_series=False,
             detail=params.detail,
+            scope=params.scope,
         )
     except EngineError as exc:
         audit("analyze_multi_horizon", arguments, error=str(exc), started=started)
