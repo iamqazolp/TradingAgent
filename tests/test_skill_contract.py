@@ -222,6 +222,46 @@ def test_skill_file_documents_every_scope_that_exists():
     assert "KHÔNG phải thiếu dữ liệu" in text
 
 
+def test_scope_routing_is_a_decision_procedure_not_an_ambiguous_keyword_table():
+    """"phân tích" must not be a scope trigger.
+
+    The first routing table listed "phân tích" under scope=full and "ngắn hạn"
+    under scope=short_term, so "phân tích vnm trong ngắn hạn" matched both rows
+    and a keyword-matching model would take the first — defeating the scope
+    feature for the most natural Vietnamese phrasing.
+    """
+    text = SKILL_PATH.read_text(encoding="utf-8")
+
+    # The routing section must be ordered steps, and must say not to route on "phân tích".
+    assert "Bước 1" in text and "Bước 4" in text
+    assert 'KHÔNG** dùng nó để chọn scope' in text or "KHÔNG** dùng nó" in text
+
+    # The worked examples must pin the two phrasings that collided.
+    assert "phân tích vnm trong ngắn hạn" in text.lower()
+    assert "phân tích toàn diện vnm" in text.lower()
+
+    # In the examples table, the short-horizon phrasing resolves to short_term.
+    for line in text.splitlines():
+        low = line.lower()
+        if low.startswith("|") and "phân tích vnm trong ngắn hạn" in low:
+            assert "short_term" in line, f"routing example resolves wrongly: {line}"
+            break
+    else:
+        pytest.fail("no routing example row for 'phân tích vnm trong ngắn hạn'")
+
+
+def test_skill_file_warns_against_reporting_latest_for_a_historical_date():
+    """The as_of trap must be spelled out, since `latest` looks like an answer."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "as_of" in text
+    assert "as_of_effective" in text
+    assert "is_trading_day" in text
+    assert "no_rows_before_as_of" in text
+    # And it must show the wrong-vs-right pair for a dated question.
+    assert "PHIÊN GẦN NHẤT" in text
+    assert "2026-01-02" in text
+
+
 def test_skill_file_documents_the_tools_that_exist():
     text = SKILL_PATH.read_text(encoding="utf-8")
     for tool in (

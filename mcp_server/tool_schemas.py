@@ -79,6 +79,22 @@ class RowSource(BaseModel):
         le=5000,
         description="most recent N trading rows (default 300). Trend indicators require at least 200 rows for SMA200.",
     )
+    as_of: IsoDate | None = Field(
+        default=None,
+        description=(
+            "Compute the indicators AS OF this date (YYYY-MM-DD) instead of the "
+            "latest session. Use for historical questions like 'RSI của VNM ngày "
+            "2026-01-02'. Only rows up to and including this date are used, so "
+            "every `latest` value is the value that stood on that date. If the "
+            "date is not a trading day, the previous trading day is used and "
+            "reported in `as_of_effective`. Omit for the current reading."
+        ),
+    )
+
+    @field_validator("as_of")
+    @classmethod
+    def _real_as_of(cls, value: str | None) -> str | None:
+        return _check_iso(value)
 
     @field_validator("rows", mode="before")
     @classmethod
@@ -119,6 +135,11 @@ class RowSource(BaseModel):
             raise ValueError("supply `rows` or `ticker`, not both")
         if self.rows is not None and len(self.rows) < 2:
             raise ValueError("at least 2 rows are needed to compute anything")
+        if self.as_of and self.rows:
+            raise ValueError(
+                "`as_of` only applies when the server loads rows; pass `ticker` "
+                "with `as_of`, or trim the `rows` you supply yourself"
+            )
         return self
 
 
@@ -288,10 +309,25 @@ class AnalyzeMultiHorizonInput(BaseModel):
         ),
     )
 
+    as_of: IsoDate | None = Field(
+        default=None,
+        description=(
+            "Run the whole analysis AS OF this date (YYYY-MM-DD) instead of the "
+            "latest session, using only rows up to and including it. For "
+            "historical questions like 'phân tích VNM tại ngày 2026-01-02'. Omit "
+            "for the current reading."
+        ),
+    )
+
     @field_validator("ticker")
     @classmethod
     def _upper(cls, value: str) -> str:
         return value.upper()
+
+    @field_validator("as_of")
+    @classmethod
+    def _real_as_of(cls, value: str | None) -> str | None:
+        return _check_iso(value)
 
     @field_validator("detail", mode="before")
     @classmethod
