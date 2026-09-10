@@ -38,8 +38,51 @@ def insufficient(reason: str, required_window: int, available: int | None = None
 
 
 def is_insufficient(result: Any) -> bool:
-    """True if `result` is an insufficient-data marker."""
+    """True if `result` is an insufficient-data marker.
+
+    Also catches the bare string ``"insufficient_data"``, which older group code
+    emitted in place of the marker dict. Without this, a consumer testing a
+    string marker would read it as a usable value.
+    """
+    if isinstance(result, str):
+        return result == INSUFFICIENT_KEY
     return isinstance(result, dict) and bool(result.get(INSUFFICIENT_KEY))
+
+
+def pick(group: dict | None, base: str) -> Any:
+    """Fetch ``base`` from a group dict, tolerating a window suffix.
+
+    Group modules key several indicators by their configured window —
+    ``rsi_14``, ``volume_ratio_20``, ``buy_sell_volume_imbalance_5`` — so the
+    key changes when a caller overrides ``params``. Consumers that hardcoded the
+    unsuffixed name silently read ``None`` forever: that is how RSI came to be
+    absent from every horizon and every comparison row.
+
+    Looks for the exact key first, then for exactly one ``base_<digits>`` match.
+    Returns ``None`` when the name is genuinely absent, so callers can tell
+    "not computed" from an insufficient-data marker.
+    """
+    if not isinstance(group, dict):
+        return None
+    if base in group:
+        return group[base]
+    prefix = f"{base}_"
+    matches = [
+        value
+        for key, value in group.items()
+        if key.startswith(prefix) and key[len(prefix):].isdigit()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def pick_scalar(group: dict | None, base: str, field: str = "latest") -> Any:
+    """``pick`` then read one scalar field, returning None for any marker."""
+    entry = pick(group, base)
+    if entry is None or is_insufficient(entry) or not isinstance(entry, dict):
+        return None
+    return entry.get(field)
 
 
 def finite(value: Any) -> float | None:

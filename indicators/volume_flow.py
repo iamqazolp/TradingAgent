@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
-from indicators import finite, insufficient, latest, require, safe_div, safe_series_div
+from indicators import (
+    finite,
+    insufficient,
+    is_insufficient,
+    latest,
+    require,
+    safe_div,
+    safe_series_div,
+)
 
 #: Relative tolerance when cross-checking `prev_close` against the prior close.
 PREV_CLOSE_TOLERANCE = 0.005
@@ -182,10 +192,13 @@ def volume_ratio(df: pd.DataFrame, window: int = 20) -> dict:
 def volume_spikes(df: pd.DataFrame, threshold: float = 1.5) -> dict:
     """Count sessions where volume exceeded `threshold` * 20-day SMA.
 
-    Counts over 20 and 60 sessions, broken down by up-day vs down-day.
+    Counts over 20 and 60 sessions, broken down by up-day vs down-day. Returns
+    the insufficient-data marker rather than zero counts when the 20-day
+    baseline cannot be formed: "no spikes" and "cannot tell" are different
+    answers and a reader cannot distinguish them from zeros.
     """
     if len(df) < 22:
-        return {"spikes_20d": {"total": 0, "up": 0, "down": 0}, "spikes_60d": {"total": 0, "up": 0, "down": 0}}
+        return insufficient("volume_spikes requires 22 rows of history", 22, int(len(df)))
 
     vol = pd.to_numeric(df["total_volume"], errors="coerce")
     close = pd.to_numeric(df["close"], errors="coerce")
@@ -210,22 +223,47 @@ def volume_spikes(df: pd.DataFrame, threshold: float = 1.5) -> dict:
     }
 
 
-def obv_divergence(df: pd.DataFrame, obv_res: dict) -> dict:
-    """Analyze OBV vs Price divergence over multiple windows (20, 60 rows)."""
-    if not isinstance(obv_res, dict) or "obv_series" not in obv_res:
-        return {"divergence_20d": "insufficient_data", "divergence_60d": "insufficient_data"}
+def obv_divergence(df: pd.DataFrame, obv_res: dict, windows=(20, 60)) -> dict:
+    """Analyze OBV vs Price divergence over `windows` rows.
 
-    obv_s = obv_res["obv_series"]
-    close = pd.to_numeric(df["close"], errors="coerce")
+    Reads the OBV run from ``obv_res["series"]`` — the key :func:`obv` actually
+    returns. An earlier version looked for ``"obv_series"``, which never exists,
+    so this whole indicator returned its early-exit stub on every call.
+
+    Keys are ``divergence_<window>`` on every path, including the insufficient
+    ones: a payload whose key names change with data sufficiency cannot be
+    documented or consumed reliably.
+    """
     out: dict[str, Any] = {}
+    if is_insufficient(obv_res) or not isinstance(obv_res, dict) or "series" not in obv_res:
+        reason = "OBV itself is unavailable, so divergence against it cannot be measured"
+        for w in windows:
+            out[f"divergence_{w}"] = insufficient(reason, w + 1)
+        return out
 
-    for w in (20, 60, 52):
+    obv_s = obv_res["series"]
+    close = pd.to_numeric(df["close"], errors="coerce")
+
+    for w in windows:
         if len(close) <= w or len(obv_s.dropna()) <= w:
-            out[f"divergence_{w}"] = "insufficient_data"
+            out[f"divergence_{w}"] = insufficient(
+                f"obv_divergence({w}) requires {w + 1} rows of history",
+                w + 1,
+                int(len(close)),
+            )
             continue
         _base = float(close.iloc[-1 - w])
         p_chg_raw = safe_div(close.iloc[-1] - _base, _base)
-        p_chg = p_chg_raw * 100.0 if p_chg_raw is not None else 0.0
+        if p_chg_raw is None:
+            # A zero or missing baseline close cannot yield a percentage. Reporting
+            # 0.0% here would read as "price unchanged", which is a different claim.
+            out[f"divergence_{w}"] = insufficient(
+                f"obv_divergence({w}): baseline close {w} sessions ago is missing or zero",
+                w + 1,
+                int(len(close)),
+            )
+            continue
+        p_chg = p_chg_raw * 100.0
         o_chg = (obv_s.iloc[-1] - obv_s.iloc[-1 - w]) / 1e6  # million shares
 
         if p_chg > 2.0 and o_chg < -1.0:
@@ -236,7 +274,10 @@ def obv_divergence(df: pd.DataFrame, obv_res: dict) -> dict:
             desc = f"Giá giảm ({p_chg:.1f}%) nhưng OBV tăng (+{o_chg:.1f}M cp) — phân kỳ dương cho thấy có lực gom ngầm"
         else:
             div = "in_sync"
-            desc = "Biến động giá và OBV đồng pha"
+            desc = (
+                f"Giá {p_chg:+.1f}% và OBV {o_chg:+.1f}M cp đồng pha qua {w} phiên "
+                "— không có phân kỳ"
+            )
 
         out[f"divergence_{w}"] = {
             "status": div,

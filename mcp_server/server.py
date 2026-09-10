@@ -198,32 +198,48 @@ def get_price_data(
         audit("get_price_data", arguments, error=str(error), started=started)
         raise error from exc
 
+    # Everything that needs the connection happens inside this block. Building
+    # the "no rows in that range" message needs date_bounds, which was
+    # previously called after the `finally` had already closed the connection —
+    # so the one path meant to correct a hallucinated date range raised
+    # sqlite3.ProgrammingError instead of returning its guidance.
     conn = store.connect()
     try:
         available = store.list_tickers(conn)
         if params.start or params.end:
             rows = store.get_range(conn, params.ticker, params.start, params.end)
-            if not rows and params.ticker in available and params.lookback_days != 300:
-                # Caller requested N recent rows but also hallucinated out-of-range dates.
-                # Fall back to get_recent so the query does not fail on hallucinated dates.
+            if not rows and params.ticker in available:
+                # Caller asked for recent rows but also supplied a date range the
+                # store cannot satisfy. Fall back to the most recent sessions
+                # rather than failing the whole query.
                 rows = store.get_recent(conn, params.ticker, params.lookback_days)
+                fell_back_from_range = bool(rows)
+            else:
+                fell_back_from_range = False
         else:
             rows = store.get_recent(conn, params.ticker, params.lookback_days)
+            fell_back_from_range = False
+
+        if not rows:
+            if params.ticker not in available:
+                msg = f"no stored rows for {params.ticker} (ticker not in the store)"
+            elif params.start or params.end:
+                earliest, latest = store.date_bounds(conn, params.ticker)
+                msg = (
+                    f"no rows for {params.ticker} in range {params.start}..{params.end}. "
+                    f"Stored data for {params.ticker} is between {earliest} and {latest}. "
+                    f"To get the most recent sessions, call get_price_data with "
+                    f"lookback_days={params.lookback_days} and omit start/end."
+                )
+            else:
+                msg = f"no stored rows for {params.ticker}"
+        else:
+            msg = None
+        date_span = store.date_bounds(conn, params.ticker) if fell_back_from_range else None
     finally:
         conn.close()
 
     if not rows:
-        if params.ticker not in available:
-            msg = f"no stored rows for {params.ticker} (ticker not in the store)"
-        elif params.start or params.end:
-            earliest, latest = store.date_bounds(conn, params.ticker)
-            msg = (
-                f"no rows for {params.ticker} in range {params.start}..{params.end}. "
-                f"Stored data for {params.ticker} is between {earliest} and {latest}. "
-                f"To get the most recent sessions, call get_price_data with lookback_days={params.lookback_days} and omit start/end."
-            )
-        else:
-            msg = f"no stored rows for {params.ticker}"
         result = {
             "ticker": params.ticker,
             "rows": [],
@@ -239,6 +255,19 @@ def get_price_data(
             "date_range": {"start": rows[0]["date"], "end": rows[-1]["date"]},
             "rows": [{k: v for k, v in row.items() if k != "ticker"} for row in rows],
         }
+        if date_span is not None:
+            # Say so when the requested range was ignored, otherwise the caller
+            # believes it received the dates it asked for.
+            result["requested_range_empty"] = {
+                "start": params.start,
+                "end": params.end,
+                "stored_range": {"start": date_span[0], "end": date_span[1]},
+                "message": (
+                    f"Không có dữ liệu trong khoảng {params.start}..{params.end}; "
+                    f"đã trả về {len(rows)} phiên gần nhất thay thế. "
+                    f"Dữ liệu {params.ticker} chỉ có từ {date_span[0]} đến {date_span[1]}."
+                ),
+            }
     audit("get_price_data", arguments, result=result, started=started)
     return result
 
@@ -353,12 +382,14 @@ def get_flow_summary(
 
 @server.tool(
     description=(
-        "Full multi-horizon analysis: daily + weekly indicators, "
-        "short/mid/long-term horizons, 3 conditional scenarios "
-        "(bullish/neutral/bearish), and investment strategy suggestions. "
-        "Use this for questions like 'phân tích đa khung VNM', "
-        "'chiến lược đầu tư HPG', or any request for short/mid/long-term analysis. "
-        "Loads rows server-side — just pass the ticker."
+        "Full multi-horizon technical analysis of one ticker. Returns daily and "
+        "weekly indicators plus, for each of the short / mid / long-term horizons "
+        "(ngắn / trung / dài hạn), a verdict, a confidence level with its reason, "
+        "the scored evidence per indicator group, conflicting signals, and an "
+        "invalidation level. Also returns measured support/resistance levels, "
+        "52-week statistics and three conditional scenarios. "
+        "Use for 'phân tích VNM', 'phân tích đa khung', or any short/mid/long-term "
+        "request. Loads rows server-side — just pass the ticker."
     )
 )
 def analyze_multi_horizon(
@@ -366,6 +397,7 @@ def analyze_multi_horizon(
     lookback_days: int = 500,
     series_tail: int = 5,
     weekly_series_tail: int = 5,
+    detail: str = "compact",
 ) -> dict:
     started = time.perf_counter()
     arguments = {
@@ -373,6 +405,7 @@ def analyze_multi_horizon(
         "lookback_days": lookback_days,
         "series_tail": series_tail,
         "weekly_series_tail": weekly_series_tail,
+        "detail": detail,
     }
     try:
         params = AnalyzeMultiHorizonInput(
@@ -380,6 +413,7 @@ def analyze_multi_horizon(
             lookback_days=lookback_days,
             series_tail=series_tail,
             weekly_series_tail=weekly_series_tail,
+            detail=detail,
         )
     except ValidationError as exc:
         error = _validation_error(exc)
@@ -407,6 +441,7 @@ def analyze_multi_horizon(
             series_tail=params.series_tail,
             weekly_series_tail=params.weekly_series_tail,
             include_series=False,
+            detail=params.detail,
         )
     except EngineError as exc:
         audit("analyze_multi_horizon", arguments, error=str(exc), started=started)
@@ -503,26 +538,31 @@ def compute_weekly_indicators(
 @server.tool(
     description=(
         "Compare 2 to 5 Vietnamese stock tickers head-to-head. "
-        "Returns 52-week performance tables (Return, High/Low with dates, "
-        "Max Drawdown, Avg Volume/Value), Moving Average position table "
-        "(vs SMA 20/50/100/200 & EMA 20/50/200, RSI, MACD), Classic Pivot "
-        "Points table (PP, S1-S3, R1-R2), and relative technical strength evaluation. "
+        "Returns a 52-week performance table (return, close high/low with dates, "
+        "max drawdown, average volume/value), a moving-average position table "
+        "(vs SMA 20/50/100/200 and EMA 20/50/200, RSI, MACD normalized by price), "
+        "a support/resistance table measured from closes, and a relative strength "
+        "assessment covering EVERY compared ticker. Tickers with too little "
+        "history are listed in `tickers_excluded` rather than dropped. "
         "Pure objective technical analysis, zero buy/sell advice."
     )
 )
 def compare_tickers(
     tickers: list[str] | str,
     lookback_days: int = 250,
+    detail: str = "compact",
 ) -> dict:
     started = time.perf_counter()
     arguments = {
         "tickers": tickers,
         "lookback_days": lookback_days,
+        "detail": detail,
     }
     try:
         params = CompareTickersInput(
             tickers=tickers,
             lookback_days=lookback_days,
+            detail=detail,
         )
     except ValidationError as exc:
         error = _validation_error(exc)
@@ -558,6 +598,7 @@ def compare_tickers(
             ticker_data,
             window_days=params.lookback_days,
             include_series=False,
+            detail=params.detail,
         )
     except EngineError as exc:
         audit("compare_tickers", arguments, error=str(exc), started=started)

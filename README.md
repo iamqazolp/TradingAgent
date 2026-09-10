@@ -64,7 +64,7 @@ error message for each way it can fail. See `docs/going_live.md`.
 uv sync                                              # create .venv from pyproject.toml
 uv run python scripts/generate_fixtures.py           # write tests/fixtures/*.json
 uv run python -m data.ingest --file tests/fixtures/sample_daily_data.json
-uv run pytest                                        # 125 tests
+uv run pytest                                        # 326 tests
 uv run python scripts/ground_truth.py                # independent reference values
 uv run python scripts/validate.py                    # engine vs ground truth
 uv run python scripts/mcp_smoke.py                   # real stdio MCP session
@@ -124,7 +124,7 @@ oh --dry-run -p "analyse VNM"
 `--dry-run` resolves the config but does not start anything ("mcp: skipped in
 dry-run"), so its `(ok)` means "config is valid", not "tools load". For that,
 `scripts/loop_smoke.py` runs `oh` against a scripted model
-(`scripts/mock_model.py`) and checks that our three tools are advertised, that
+(`scripts/mock_model.py`) and checks that our tools are advertised, that
 one is dispatched and executed, that its result returns into the conversation,
 and that the value quoted back also appears in `logs/tool_calls.jsonl`.
 
@@ -135,9 +135,46 @@ and that the value quoted back also appears in `logs/tool_calls.jsonl`.
 | `get_price_data(ticker, lookback_days=300, start, end)` | raw stored rows, oldest first. `lookback_days` counts trading rows, not calendar days |
 | `compute_indicators(ticker \| rows, groups, params, series_tail)` | the seven indicator groups |
 | `get_flow_summary(ticker \| rows, window=5)` | the cheap flow-only answer |
+| `analyze_multi_horizon(ticker, lookback_days=500, detail="compact")` | the full report: daily + weekly, three horizons, levels, 52-week stats, scenarios |
+| `compute_weekly_indicators(ticker \| rows, groups, series_tail=26)` | indicator groups on weekly bars only |
+| `compare_tickers(tickers, lookback_days=250, detail="compact")` | 2–5 tickers head to head |
 
 Groups: `trend`, `momentum`, `volatility`, `volume_flow`, `trade_flow`,
 `value_flow`, `foreign_flow`.
+
+`detail="compact"` (the default on the two large tools) omits fields that
+duplicate data present elsewhere in the same response. It cuts
+`analyze_multi_horizon` from ~17k to ~14k tokens and `compare_tickers` on three
+tickers from ~13k to ~7.6k, which matters when the consumer is a locally hosted
+model holding the skill prompt, the payload and its own report in one context
+window. `detail="full"` restores every field.
+
+## The interpretation layer
+
+`analyze_multi_horizon` does the reasoning in Python rather than leaving it to
+the model, because the deployment target is a ~31B local model that renders the
+payload into a report.
+
+Each of the three horizons — ngắn hạn (1–4 weeks), trung hạn (1–3 months), dài
+hạn (> 3 months) — is built from windows appropriate to *its own* timeframe, so
+agreement between them is real rather than one reading counted three times:
+
+| Horizon | Inputs |
+|---|---|
+| short | EMA12/SMA20, RSI(14) daily, MACD daily, close percentile 20d, imbalance 5d, foreign 20d, return streak |
+| mid | SMA20/50/100, SMA20/50 crossover, RSI(14) daily, MACD daily, percentile 60d, OBV divergence 60d, foreign 60d, weekly SMA20 confirmation |
+| long | weekly SMA20/50, daily SMA200, SMA50/200 crossover, weekly RSI, weekly MACD, percentile 126d, foreign 120d, 250d return |
+
+Each horizon returns a `components` list — one entry per contributing group with
+a `direction` (+1 / 0 / −1), a `weight`, and a Vietnamese `evidence` sentence
+that already contains the number. A group with no data reports
+`direction: null` plus a `missing_reason` and is excluded from the score, so
+thin history lowers `confidence` instead of dragging the verdict toward neutral.
+`confidence_reason`, `conflicts` and a measured `invalidation` level come with
+it. `indicators/levels.py` supplies support and resistance from swing closes,
+N-session close extremes, moving averages and Bollinger bands, merged into
+confluence zones — every level names its `basis`, and nothing is derived from a
+multiple of the close.
 
 Every indicator function is pure — pandas in, dict out, no I/O — and when history
 is too short it returns
@@ -221,13 +258,16 @@ failures. Report: `logs/validation_report.json`.
 data/            schema.sql, store.py (SQLite upsert store), ingest.py (casts, rejects, warnings)
 indicators/      pure functions: trend, momentum, volatility, volume_flow,
                  trade_flow, value_flow, foreign_flow + engine.py (dispatch, quality, serialize)
-mcp_server/      server.py (three tools, audit log), tool_schemas.py (pydantic validation)
+                 interpretation: weekly.py (bar aggregation), levels.py (support/resistance),
+                 horizon.py (three horizons, scored components, confidence),
+                 scenarios.py, strategies.py, stats_52w.py, comparison.py
+mcp_server/      server.py (six tools, audit log), tool_schemas.py (pydantic validation)
 skills/          technical-analysis/SKILL.md — the reasoning framework
 scripts/         generate_fixtures, ground_truth, validate, mcp_smoke, install_skill,
                  mock_feed + mock_model (test doubles for the two plug-in points),
                  loop_smoke (oh end to end against the scripted model)
-tests/           125 tests: hand-calculated indicators, engine, store/ingest, MCP layer,
-                 live feed over HTTP
+tests/           326 tests: hand-calculated indicators, engine, store/ingest, MCP layer,
+                 live feed over HTTP, levels, horizon inputs, SKILL.md field contract
 docs/            going_live.md — the two plug-in points, what is proved and what is not
                  acceptance_prompts.md — the 10 interactive prompts for Phase 4
 ```
@@ -239,7 +279,7 @@ docs/            going_live.md — the two plug-in points, what is proved and wh
 | 0 Environment | done. `oh -p` runs a full turn end to end against the scripted model in `scripts/loop_smoke.py`; only the real provider key is missing (`oh setup`) |
 | 1 Data layer | done: 3 tickers × 520 days ingested, range queries and idempotent re-ingest tested, live HTTP fetch tested against `scripts/mock_feed.py` |
 | 2 Indicator engine | done: Groups A–G pure, hand-calculated unit tests, insufficient-data contract enforced |
-| 3 MCP server | done: three tools, pydantic-validated, verified over a real stdio session |
-| 4 OpenHarness integration | done mechanically: the skill reaches the system prompt, all three tools reach the model, one is dispatched, executed and audited (`loop_smoke.py`). The 10-prompt judgement check needs credentials — see `docs/acceptance_prompts.md` |
+| 3 MCP server | done: six tools, pydantic-validated, verified over a real stdio session |
+| 4 OpenHarness integration | done mechanically: the skill reaches the system prompt, all six tools reach the model, one is dispatched, executed and audited (`loop_smoke.py`). The 10-prompt judgement check needs credentials — see `docs/acceptance_prompts.md` |
 | 5 Ground-truth validation | done: 105/105, max deviation 2.6e-14 |
 | 6 Hardening | done: gaps/halts/short history, corporate-action flagging, per-call audit log |

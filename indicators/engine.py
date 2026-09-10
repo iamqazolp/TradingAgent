@@ -31,10 +31,10 @@ from indicators.volume_flow import (
 )
 from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from indicators.horizon import horizon_analysis
+from indicators.levels import key_levels
 from indicators.scenarios import generate_scenarios
 from indicators.strategies import suggest_strategies
 from indicators.stats_52w import stats_52w
-from indicators.pivots import classic_pivots
 
 #: Columns the engine expects on every row.
 REQUIRED_COLUMNS = (
@@ -249,7 +249,14 @@ def _compute_core(
         for dt_idx, r in sub_tail.iterrows():
             c_val = finite(r.get("close"))
             pc_val = finite(r.get("prev_close"))
-            chg = round((c_val - pc_val) / pc_val * 100, 2) if c_val and pc_val and pc_val > 0 else 0.0
+            # None, not 0.0, when the change cannot be computed: "unchanged" and
+            # "unknown" are different facts and a reader cannot tell them apart
+            # once both print as 0.00%.
+            chg = (
+                round((c_val - pc_val) / pc_val * 100, 2)
+                if c_val is not None and pc_val is not None and pc_val > 0
+                else None
+            )
             tv_val = finite(r.get("total_volume"))
             fb_v = finite(r.get("foreign_buy_value"))
             fs_v = finite(r.get("foreign_sell_value"))
@@ -302,12 +309,69 @@ def compute(
     return _compute_core(frame, requested, params, series_tail=series_tail)
 
 
+#: Keys duplicated across the multi-horizon payload. Each is available in full
+#: elsewhere in the same response, so repeating it inside every horizon triples
+#: the cost of the largest fields for no extra information.
+_HORIZON_REDUNDANT_KEYS: tuple[str, ...] = (
+    "macd",            # daily.groups.trend.macd
+    "bollinger",       # daily.groups.volatility.bollinger
+    "weekly_macd",     # weekly.groups.trend.macd
+    "weekly_bollinger",
+    "key_levels",      # levels.supports / levels.resistances
+    "weekly_confirmation",
+    "foreign_overall",
+    "foreign_20d",     # groups.foreign_flow.foreign_net_value.windows
+    "foreign_60d",
+    "foreign_120d",
+)
+
+#: Weekly groups worth computing for the long-term view. The flow groups are
+#: summed over a week, which makes them hard to interpret and nothing consumes
+#: them; computing all seven roughly doubled the weekly payload.
+_COMPACT_WEEKLY_GROUPS: tuple[str, ...] = ("trend", "momentum", "volatility")
+
+
+def compact_multi_horizon(result: dict) -> dict:
+    """Drop fields that repeat data present elsewhere in the same payload.
+
+    The full payload runs to roughly 19k tokens for 500 sessions, most of it
+    duplication. A locally hosted model has to hold the skill prompt, this
+    payload and its own report inside one context window, and the duplicated
+    copies are what push that over. Every key removed here is still available
+    at its canonical path.
+    """
+    horizons = result.get("horizons")
+    if isinstance(horizons, dict):
+        for name in ("short_term", "mid_term", "long_term"):
+            horizon = horizons.get(name)
+            if isinstance(horizon, dict):
+                for key in _HORIZON_REDUNDANT_KEYS:
+                    horizon.pop(key, None)
+
+    strategies = result.get("strategies")
+    if isinstance(strategies, dict):
+        for name in ("short_term", "mid_term", "long_term"):
+            entry = strategies.get(name)
+            if isinstance(entry, dict):
+                # Duplicates `levels`, and the per-horizon nearest levels are
+                # already in support_zone / resistance_zone.
+                entry.pop("levels_to_watch", None)
+                entry.pop("conflicts", None)
+
+    levels = result.get("levels")
+    if isinstance(levels, dict):
+        levels.pop("swings", None)
+
+    return result
+
+
 def multi_horizon_compute(
     rows: list[dict],
     *,
     series_tail: int = 5,
     weekly_series_tail: int = 5,
     include_series: bool = False,
+    detail: str = "compact",
 ) -> dict:
     """Full multi-horizon analysis: daily + weekly indicators, horizons,
     scenarios, and investment strategies.
@@ -333,6 +397,10 @@ def multi_horizon_compute(
     include_series
         Whether to keep raw float series arrays. If False (default), series
         arrays are pruned to keep LLM context light.
+    detail
+        ``"compact"`` (default) removes fields that duplicate data present
+        elsewhere in the response, roughly halving the payload for a locally
+        hosted model. ``"full"`` keeps every field.
 
     Returns
     -------
@@ -353,12 +421,13 @@ def multi_horizon_compute(
 
     # Need at least ~14 weekly bars for RSI(14) to produce a value
     _MIN_WEEKLY_BARS = 14
+    weekly_groups = GROUPS if detail == "full" else _COMPACT_WEEKLY_GROUPS
     if len(weekly_frame) >= _MIN_WEEKLY_BARS:
         # Drop rows with NaN prev_close (first week) for clean computation
         wf_clean = weekly_frame.dropna(subset=["prev_close"])
         if len(wf_clean) >= _MIN_WEEKLY_BARS:
             weekly_result = _compute_core(
-                wf_clean, GROUPS, series_tail=weekly_series_tail,
+                wf_clean, weekly_groups, series_tail=weekly_series_tail,
             )
             weekly_result["timeframe"] = "weekly"
             weekly_flags = weekly_quality_flags(weekly_frame)
@@ -367,23 +436,31 @@ def multi_horizon_compute(
 
     daily_result["timeframe"] = "daily"
 
-    # 3. Multi-horizon analysis
+    # 3. Support / resistance levels, built from close structure, MAs and bands.
+    #    Computed before the horizons because each horizon attaches a real
+    #    invalidation level taken from here rather than inventing one.
+    levels = key_levels(
+        frame,
+        daily_result.get("groups", {}).get("trend"),
+        daily_result.get("groups", {}).get("volatility"),
+    )
+
+    # 4. Multi-horizon analysis
     latest_close = daily_result.get("latest_close")
-    horizons = horizon_analysis(daily_result, weekly_result, latest_close)
+    horizons = horizon_analysis(daily_result, weekly_result, latest_close, levels)
 
-    # 4. Scenario generation
+    # 5. Scenario generation
     scenarios = generate_scenarios(
-        daily_result, weekly_result, horizons, latest_close,
+        daily_result, weekly_result, horizons, latest_close, levels,
     )
 
-    # 5. Strategy / Technical perspective suggestions
+    # 6. Technical perspectives per horizon
     strategies = suggest_strategies(
-        horizons, scenarios, latest_close, daily_result,
+        horizons, scenarios, latest_close, daily_result, levels,
     )
 
-    # 6. 52-week stats and Pivot Points
+    # 7. 52-week stats
     s52 = stats_52w(frame, window=min(250, len(frame)))
-    piv = classic_pivots(frame)
 
     result = {
         "analysis_type": "multi_horizon",
@@ -395,10 +472,13 @@ def multi_horizon_compute(
         "scenarios": scenarios,
         "strategies": strategies,
         "stats_52w": s52,
-        "pivots": piv,
+        "levels": levels,
+        "detail": detail,
     }
     if not include_series:
         result = prune_series(result)
+    if detail != "full":
+        result = compact_multi_horizon(result)
     return result
 
 
@@ -575,7 +655,7 @@ def prune_series(obj: Any) -> Any:
     """Prune verbose historical series arrays from analysis dicts to keep LLM context light.
 
     Removes dict keys ending in '_series', 'series', and 'normalized_series_100'.
-    Scalar summaries, levels, horizons, scenarios, and pivots are preserved.
+    Scalar summaries, levels, horizons and scenarios are preserved.
     """
     if isinstance(obj, dict):
         return {

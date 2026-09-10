@@ -1,19 +1,20 @@
-"""Technical perspectives and observation levels per horizon (Pure Analysis).
+"""Technical perspectives and observation levels per horizon (pure analysis).
 
-Provides objective technical observations and key price levels for
-short-term, mid-term, and long-term horizons without any investment or
-buy/sell advice.
+Objective technical observations and key price levels for the short, mid and
+long term. No buy/sell advice, no entry, take-profit or stop-loss
+recommendation: those are the root agent's business, and this layer must not
+put words in its mouth.
 
-Strictly follows:
-- Pure technical analysis & quantitative assessment
-- NO BUY/SELL RECOMMENDATIONS
-- Key support/resistance levels & confirmation triggers
+Every level quoted here comes from :mod:`indicators.levels` or from a moving
+average computed by the trend group. An earlier version filled gaps with
+``close * 0.95`` / ``close * 1.08`` and a "volatility floor" of
+``close − 2σ``, which read as measured support in the payload; those fallbacks
+are gone, and an absent level is now reported as absent.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
+from indicators import finite, is_insufficient
 
 _DISCLAIMER = (
     "Báo cáo thuần túy là phân tích kỹ thuật và dòng tiền định lượng khách quan, "
@@ -36,161 +37,155 @@ def suggest_strategies(
     scenarios: dict,
     latest_close: float,
     daily_compute: dict,
+    levels: dict | None = None,
 ) -> dict:
-    """Provide technical perspectives and observation levels for each horizon.
-
-    Parameters
-    ----------
-    horizons : dict
-        Output of horizon_analysis.
-    scenarios : dict
-        Output of generate_scenarios.
-    latest_close : float
-        Most recent closing price.
-    daily_compute : dict
-        Daily indicator output.
-    """
+    """Technical perspective and observation levels for each horizon."""
     if latest_close is None or latest_close <= 0:
         return {"error": "invalid_close_price", "horizons": {}, "disclaimer": _DISCLAIMER}
 
     short_h = horizons.get("short_term", {})
     mid_h = horizons.get("mid_term", {})
     long_h = horizons.get("long_term", {})
-    alignment = horizons.get("horizon_alignment", "mixed_signals")
-
-    vol = short_h.get("volatility") or mid_h.get("volatility")
-    scenario_list = scenarios.get("scenarios", [])
+    alignment = horizons.get("alignment") or {}
 
     return {
-        "short_term": _short_perspective(short_h, latest_close, vol, scenario_list),
-        "mid_term": _mid_perspective(mid_h, latest_close, vol, scenario_list),
-        "long_term": _long_perspective(long_h, latest_close, vol, scenario_list),
-        "horizon_alignment": alignment,
-        "technical_summary": _technical_summary(alignment),
+        "short_term": _perspective(short_h, latest_close, levels, "ngắn hạn"),
+        "mid_term": _perspective(mid_h, latest_close, levels, "trung hạn"),
+        "long_term": _perspective(long_h, latest_close, levels, "dài hạn"),
+        "horizon_alignment": horizons.get("horizon_alignment", alignment.get("label")),
+        "technical_summary": alignment.get("summary")
+            or "Chưa đủ dữ liệu để tổng hợp đồng thuận đa khung.",
+        "shared_input_caveat": alignment.get("shared_input_caveat"),
         "vn_market_rules": _VN_MARKET_RULES,
         "disclaimer": _DISCLAIMER,
     }
 
 
-def _vol_distance(close: float, vol_pct: float | None, sigma: float = 2.0) -> float:
-    if vol_pct is None or vol_pct <= 0:
-        return close * 0.05
-    return close * (vol_pct / 100) * sigma
+def _nearest(levels: dict | None, side: str) -> dict | None:
+    if not isinstance(levels, dict) or is_insufficient(levels):
+        return None
+    entry = levels.get(f"nearest_{side}")
+    return entry if isinstance(entry, dict) else None
 
 
-def _nearest_support(horizon: dict) -> dict | None:
-    levels = horizon.get("key_levels", {}).get("support", [])
-    return levels[0] if levels else None
+def _horizon_ma_levels(horizon: dict, close: float) -> dict[str, list[dict]]:
+    """Support/resistance drawn from this horizon's own moving averages."""
+    supports: list[dict] = []
+    resistances: list[dict] = []
+    for name, value in (horizon.get("sma_values") or {}).items():
+        level = finite(value)
+        if level is None or level <= 0:
+            continue
+        entry = {
+            "level": round(level, 0),
+            "basis": name,
+            "distance_pct": round(abs(level - close) / close * 100, 2) if close else None,
+        }
+        (supports if level < close else resistances).append(entry)
+    supports.sort(key=lambda item: -item["level"])
+    resistances.sort(key=lambda item: item["level"])
+    return {"support": supports, "resistance": resistances}
 
 
-def _nearest_resistance(horizon: dict) -> dict | None:
-    levels = horizon.get("key_levels", {}).get("resistance", [])
-    return levels[0] if levels else None
-
-
-def _short_perspective(
-    horizon: dict, close: float, vol: float | None, scenarios: list[dict],
+def _perspective(
+    horizon: dict, close: float, levels: dict | None, label: str
 ) -> dict:
+    """One horizon's technical state, levels to watch and confirmation triggers."""
     strength = horizon.get("signal_strength", "neutral")
-    support = _nearest_support(horizon)
-    resistance = _nearest_resistance(horizon)
+    ma_levels = _horizon_ma_levels(horizon, close)
 
-    s_level = support["level"] if support else round(close - _vol_distance(close, vol, 1.0), 0)
-    r_level = resistance["level"] if resistance else round(close * 1.05, 0)
-    vol_floor = round(close - _vol_distance(close, vol, 2.0), 0)
+    # Prefer this horizon's own MA levels; fall back to the report-wide nearest
+    # level, which is still measured, just not horizon-specific.
+    support = (ma_levels["support"] or [None])[0] or _nearest(levels, "support")
+    resistance = (ma_levels["resistance"] or [None])[0] or _nearest(levels, "resistance")
 
     if "bullish" in strength:
-        state = "Phục hồi ngắn hạn, giữ trên các ngưỡng hỗ trợ gần"
-        conf = f"Cần duy trì trên vùng hỗ trợ {s_level:,.0f} VND và kiểm định mốc cản {r_level:,.0f} VND"
-        risk = f"Áp lực điều chỉnh gia tăng nếu giá đóng cửa xuyên thủng ngưỡng {vol_floor:,.0f} VND"
+        state = f"Cấu trúc {label} nghiêng tích cực"
     elif "bearish" in strength:
-        state = "Điều chỉnh ngắn hạn, chịu áp lực bán"
-        conf = f"Cần tín hiệu hấp thụ cung và đóng cửa vượt lại mốc cản {r_level:,.0f} VND kèm khối lượng"
-        risk = f"Rủi ro tiếp tục dò đáy nếu không giữ được mốc hỗ trợ {s_level:,.0f} VND"
+        state = f"Cấu trúc {label} nghiêng tiêu cực"
+    elif strength == "insufficient_data":
+        state = f"Chưa đủ dữ liệu để đánh giá cấu trúc {label}"
     else:
-        state = "Đi ngang tích lũy trong biên độ hẹp"
-        conf = f"Theo dõi phản ứng giá tại vùng cận trên {r_level:,.0f} VND và cận dưới {s_level:,.0f} VND"
-        risk = f"Biến động có thể mở rộng bất ngờ nếu dải Bollinger Bands bung nén"
+        state = f"Cấu trúc {label} trung tính, chưa có hướng rõ ràng"
+
+    confirmation = _confirmation(strength, support, resistance)
+    risks = _risks(horizon, strength, support, resistance)
 
     return {
-        "horizon": "short_term",
+        "horizon": horizon.get("horizon"),
+        "label_vi": horizon.get("label_vi"),
         "technical_state": state,
-        "support_zone": {"level": s_level, "volatility_floor": vol_floor},
-        "resistance_zone": {"level": r_level},
-        "confirmation_signal": conf,
-        "risk_factors": risk,
         "signal_strength": strength,
+        "confidence": horizon.get("confidence"),
+        "confidence_reason": horizon.get("confidence_reason"),
+        "support_zone": support or {"level": None, "unavailable_reason":
+                                    "không có mức hỗ trợ nào tính được dưới giá hiện tại"},
+        "resistance_zone": resistance or {"level": None, "unavailable_reason":
+                                         "không có mức kháng cự nào tính được trên giá hiện tại"},
+        "levels_to_watch": ma_levels,
+        "confirmation_signal": confirmation,
+        "risk_factors": risks,
+        "invalidation": horizon.get("invalidation"),
+        "conflicts": horizon.get("conflicts", []),
     }
 
 
-def _mid_perspective(
-    horizon: dict, close: float, vol: float | None, scenarios: list[dict],
-) -> dict:
-    strength = horizon.get("signal_strength", "neutral")
-    sma_values = horizon.get("sma_values", {})
-    sma50 = sma_values.get("SMA50")
-    sma200 = sma_values.get("SMA200")
-    weekly_confirm = horizon.get("weekly_confirmation") or {}
-
-    mid_support = sma50 if sma50 and sma50 < close else (sma200 if sma200 and sma200 < close else round(close * 0.95, 0))
-    mid_resistance = sma50 if sma50 and sma50 > close else (sma200 if sma200 and sma200 > close else round(close * 1.08, 0))
-
+def _confirmation(strength: str, support: dict | None, resistance: dict | None) -> str:
+    """What would confirm the current reading, in level terms."""
     if "bullish" in strength:
-        state = "Xu hướng trung hạn tích cực, cấu trúc MA hướng lên"
-        conf = f"Xu hướng trung hạn duy trì khi giá vận động trên SMA50 ({mid_support:,.0f} VND)"
-        risk = "Tín hiệu suy yếu nếu xuất hiện giao cắt tử thần (death cross) hoặc RSI trung hạn rơi dưới 40"
-    elif "bearish" in strength:
-        state = "Xu hướng trung hạn tiêu cực, giá dưới các đường trung bình lớn"
-        conf = f"Cần lấy lại mốc SMA50/SMA200 quanh {mid_resistance:,.0f} VND để cân bằng lại xu hướng"
-        risk = f"Áp lực bán trung hạn tiếp tục duy trì nếu dòng vốn ngoại tiếp tục rút ròng"
-    else:
-        state = "Trạng thái trung hạn giằng co, chờ đợi tín hiệu bứt phá"
-        conf = f"Cần một phiên bứt phá khỏi vùng cản {mid_resistance:,.0f} VND kèm thanh khoản vượt mức bình quân"
-        risk = f"Rủi ro trượt dốc nếu đánh mất ngưỡng đỡ {mid_support:,.0f} VND"
-
-    return {
-        "horizon": "mid_term",
-        "technical_state": state,
-        "support_zone": {"level": round(mid_support, 0)},
-        "resistance_zone": {"level": round(mid_resistance, 0)},
-        "confirmation_signal": conf,
-        "risk_factors": risk,
-        "weekly_context": weekly_confirm,
-        "signal_strength": strength,
-    }
+        if resistance:
+            return (
+                f"Cần đóng cửa vượt {resistance['level']:,.0f} VND ({resistance['basis']}) "
+                "kèm khối lượng trên trung bình 20 phiên để xác nhận"
+            )
+        return "Giá đã trên mọi mức kháng cự tính được; theo dõi khả năng giữ nhịp kèm thanh khoản"
+    if "bearish" in strength:
+        if resistance:
+            return (
+                f"Cần lấy lại {resistance['level']:,.0f} VND ({resistance['basis']}) "
+                "trên giá đóng cửa để cân bằng lại cấu trúc"
+            )
+        return "Chưa xác định được mức kháng cự tham chiếu để xác nhận đảo chiều"
+    if support and resistance:
+        return (
+            f"Theo dõi phản ứng giá tại {resistance['level']:,.0f} VND ({resistance['basis']}) "
+            f"và {support['level']:,.0f} VND ({support['basis']})"
+        )
+    return "Chưa đủ mức tham chiếu hai chiều để nêu tín hiệu xác nhận"
 
 
-def _long_perspective(
-    horizon: dict, close: float, vol: float | None, scenarios: list[dict],
-) -> dict:
-    strength = horizon.get("signal_strength", "neutral")
-    sma200 = horizon.get("daily_sma200")
-    w_trend = horizon.get("weekly_trend_alignment")
-    w_rsi = horizon.get("weekly_rsi")
+def _risks(horizon: dict, strength: str, support: dict | None, resistance: dict | None) -> list[str]:
+    """Concrete, numbered risk factors for this horizon."""
+    out: list[str] = []
 
-    if sma200:
-        pos_str = "trên SMA200 (kênh giá dài hạn giữ vững)" if close > sma200 else "dưới SMA200 (kênh giá dài hạn chịu áp lực)"
-    else:
-        pos_str = "chưa đủ dữ liệu 200 phiên"
+    invalidation = horizon.get("invalidation")
+    if invalidation and invalidation.get("condition"):
+        out.append(invalidation["condition"])
+    elif "bullish" in strength and support:
+        out.append(
+            f"Rủi ro điều chỉnh nếu đóng cửa dưới {support['level']:,.0f} VND ({support['basis']})"
+        )
+    elif "bearish" in strength and support:
+        out.append(
+            f"Rủi ro dò đáy tiếp nếu không giữ được {support['level']:,.0f} VND ({support['basis']})"
+        )
 
-    state = f"Cấu trúc dài hạn: giá đang nằm {pos_str}"
-    conf = f"Cần quan sát cấu trúc nến tuần và chỉ báo RSI tuần ({w_rsi or 'N/A'})"
-    risk = "Rủi ro phân kỳ âm dài hạn hoặc dòng vốn ngoại bán ròng kéo dài"
+    for conflict in horizon.get("conflicts", []):
+        out.append(f"Tín hiệu xung đột: {conflict['description']}")
 
-    return {
-        "horizon": "long_term",
-        "technical_state": state,
-        "sma200_level": sma200,
-        "weekly_trend": w_trend,
-        "confirmation_signal": conf,
-        "risk_factors": risk,
-        "signal_strength": strength,
-    }
+    missing = horizon.get("groups_missing") or []
+    if missing:
+        out.append("Độ tin cậy bị giới hạn do thiếu dữ liệu: " + ", ".join(missing))
 
+    volatility = horizon.get("volatility") or {}
+    annualized = finite(volatility.get("annualized_pct"))
+    if annualized is not None:
+        stop_distance = finite(volatility.get("suggested_stop_distance_pct"))
+        note = (
+            f"Biến động close-to-close {annualized:.1f}%/năm (thay thế ATR, không phải ATR)"
+        )
+        if stop_distance is not None:
+            note += f"; khoảng cách kỹ thuật tham chiếu {stop_distance:.2f}%"
+        out.append(note)
 
-def _technical_summary(alignment: str) -> str:
-    if alignment == "all_bullish":
-        return "Cả ba tầm nhìn ngắn, trung và dài hạn đều đồng thuận tích cực."
-    if alignment == "all_bearish":
-        return "Cả ba tầm nhìn đều chịu áp lực tiêu cực, rủi ro điều chỉnh kỹ thuật ở mức cao."
-    return "Tín hiệu kỹ thuật giữa các khung thời gian có sự phân hóa, cần theo dõi các mốc kiểm định."
+    return out

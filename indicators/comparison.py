@@ -3,19 +3,21 @@
 Produces comparative tables and quantitative summaries across:
 1. 52-week price performance & drawdowns
 2. Moving average alignments & momentum metrics
-3. Classic Pivot Points and key support/resistance levels
-4. Relative technical structure evaluation
+3. Support/resistance levels measured from closes (see :mod:`indicators.levels`)
+4. Relative technical structure evaluation, covering every compared ticker
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
-
+from indicators import finite, is_insufficient, pick
 from indicators.engine import rows_to_frame, _compute_core, prune_series
-from indicators.pivots import classic_pivots
+from indicators.levels import key_levels
 from indicators.stats_52w import stats_52w
+
+#: A ticker needs at least this many rows before comparing it means anything.
+MIN_ROWS = 10
 
 
 _COMPARE_DISCLAIMER = (
@@ -29,6 +31,7 @@ def compare_multiple_tickers(
     ticker_data: dict[str, list[dict]],
     window_days: int = 250,
     include_series: bool = False,
+    detail: str = "compact",
 ) -> dict[str, Any]:
     """Compare 2 to 5 tickers head-to-head from raw row dicts.
 
@@ -38,6 +41,11 @@ def compare_multiple_tickers(
         Mapping of ticker symbol -> list of stored row dicts.
     window_days : int
         Lookback window in trading sessions (~250 for 1 year).
+    detail
+        ``"compact"`` (default) omits the full per-ticker indicator dump from
+        ``per_ticker_details``, which accounted for roughly four fifths of the
+        response while every figure a comparison report needs is already in the
+        three tables. ``"full"`` keeps it.
     """
     tickers = list(ticker_data.keys())
     if len(tickers) < 2:
@@ -46,11 +54,25 @@ def compare_multiple_tickers(
     per_ticker: dict[str, Any] = {}
     table_52w: list[dict] = []
     table_ma: list[dict] = []
-    table_pivots: list[dict] = []
+    table_levels: list[dict] = []
+    excluded: list[dict] = []
 
     for sym in tickers:
         rows = ticker_data[sym]
-        if not rows or len(rows) < 10:
+        if not rows or len(rows) < MIN_ROWS:
+            # Reported, not dropped. Silently omitting a ticker the caller asked
+            # about leaves it in `tickers` with no row anywhere else, and the
+            # consumer has no way to notice.
+            excluded.append({
+                "ticker": sym,
+                "rows_available": len(rows) if rows else 0,
+                "rows_required": MIN_ROWS,
+                "reason": "insufficient_history",
+                "message": (
+                    f"{sym}: chỉ có {len(rows) if rows else 0} phiên dữ liệu "
+                    f"(cần tối thiểu {MIN_ROWS}), không thể đưa vào so sánh."
+                ),
+            })
             continue
         frame = rows_to_frame(rows)
         latest_c = float(frame["close"].iloc[-1])
@@ -65,25 +87,15 @@ def compare_multiple_tickers(
             series_tail=10,
         )
 
-        # 3. Pivots
-        piv = classic_pivots(frame)
-
-        # Extract MA distances
+        # 3. Support / resistance levels measured from closes, MAs and bands
         trend = ind.get("groups", {}).get("trend", {})
         mom = ind.get("groups", {}).get("momentum", {})
-        vf = ind.get("groups", {}).get("volume_flow", {})
-        ff = ind.get("groups", {}).get("foreign_flow", {})
+        lv = key_levels(frame, trend, ind.get("groups", {}).get("volatility"))
 
         def _get_dist(ma_key: str) -> float | None:
             obj = trend.get(ma_key, {})
-            if isinstance(obj, dict):
+            if isinstance(obj, dict) and not is_insufficient(obj):
                 return obj.get("distance_pct")
-            return None
-
-        def _get_val(ma_key: str) -> float | None:
-            obj = trend.get(ma_key, {})
-            if isinstance(obj, dict):
-                return obj.get("latest")
             return None
 
         # Build 52w table row
@@ -104,10 +116,28 @@ def compare_multiple_tickers(
             "avg_value_bil": s52.get("avg_daily_value_bil"),
         })
 
-        # Build MA & Momentum table row
-        rsi_val = mom.get("rsi", {}).get("latest") if isinstance(mom.get("rsi"), dict) else None
+        # Build MA & Momentum table row.
+        # RSI is resolved through `pick` because the momentum group keys it by
+        # window (`rsi_14`). Reading a literal "rsi" returned None for every
+        # ticker, so this column was always empty and the RSI comparison
+        # observation below could never fire.
+        rsi_entry = pick(mom, "rsi")
+        rsi_val = (
+            rsi_entry.get("latest")
+            if isinstance(rsi_entry, dict) and not is_insufficient(rsi_entry)
+            else None
+        )
+        rsi_zone = (
+            rsi_entry.get("zone")
+            if isinstance(rsi_entry, dict) and not is_insufficient(rsi_entry)
+            else None
+        )
         macd_obj = trend.get("macd", {})
-        macd_lat = macd_obj.get("latest", {}) if isinstance(macd_obj, dict) else {}
+        macd_lat = (
+            macd_obj.get("latest", {})
+            if isinstance(macd_obj, dict) and not is_insufficient(macd_obj)
+            else {}
+        )
 
         table_ma.append({
             "ticker": sym,
@@ -120,44 +150,63 @@ def compare_multiple_tickers(
             "vs_ema50_pct": _get_dist("ema_50"),
             "vs_ema200_pct": _get_dist("ema_200"),
             "rsi": round(rsi_val, 2) if rsi_val is not None else None,
+            "rsi_zone": rsi_zone,
             "macd": round(macd_lat.get("macd", 0), 2) if macd_lat.get("macd") is not None else None,
             "macd_signal": round(macd_lat.get("signal", 0), 2) if macd_lat.get("signal") is not None else None,
             "macd_hist": round(macd_lat.get("histogram", 0), 2) if macd_lat.get("histogram") is not None else None,
+            # MACD is in VND, so its magnitude scales with the share price and is
+            # not comparable across tickers. This normalized figure is.
+            "macd_hist_pct_of_close": (
+                round(macd_lat["histogram"] / latest_c * 100, 3)
+                if macd_lat.get("histogram") is not None and latest_c else None
+            ),
+            "trend_alignment": ind.get("trend_alignment"),
         })
 
-        # Build Pivot table row
-        p_classic = piv.get("classic", {})
-        table_pivots.append({
+        # Build levels table row
+        nearest_s = lv.get("nearest_support") if isinstance(lv, dict) else None
+        nearest_r = lv.get("nearest_resistance") if isinstance(lv, dict) else None
+        position = lv.get("position", {}) if isinstance(lv, dict) else {}
+        table_levels.append({
             "ticker": sym,
             "close": latest_c,
-            "R2": p_classic.get("R2"),
-            "R1": p_classic.get("R1"),
-            "PP": p_classic.get("PP"),
-            "S1": p_classic.get("S1"),
-            "S2": p_classic.get("S2"),
-            "S3": p_classic.get("S3"),
-            "position": piv.get("position"),
-            "position_desc": piv.get("position_description"),
+            "nearest_support": nearest_s["level"] if nearest_s else None,
+            "nearest_support_basis": nearest_s["basis"] if nearest_s else None,
+            "nearest_support_distance_pct": nearest_s.get("distance_pct") if nearest_s else None,
+            "nearest_resistance": nearest_r["level"] if nearest_r else None,
+            "nearest_resistance_basis": nearest_r["basis"] if nearest_r else None,
+            "nearest_resistance_distance_pct": nearest_r.get("distance_pct") if nearest_r else None,
+            "position": position.get("reading"),
+            "position_desc": position.get("description"),
+            "pct_in_band": position.get("pct_in_band"),
         })
 
         per_ticker[sym] = {
             "stats_52w": s52,
-            "pivots": piv,
+            "levels": lv,
             "trend_alignment": ind.get("trend_alignment"),
-            "indicators": ind.get("groups"),
         }
+        if detail == "full":
+            per_ticker[sym]["indicators"] = ind.get("groups")
 
-    # Relative structure assessment
-    relative_eval = _assess_relative_strength(table_52w, table_ma, table_pivots)
+    # Relative structure assessment across every compared ticker
+    relative_eval = _assess_relative_strength(table_52w, table_ma, table_levels)
 
     result = {
         "tickers": tickers,
+        "tickers_compared": [row["ticker"] for row in table_52w],
+        "tickers_excluded": excluded,
         "window_days": window_days,
         "table_52w": table_52w,
         "table_ma": table_ma,
-        "table_pivots": table_pivots,
+        "table_levels": table_levels,
         "relative_assessment": relative_eval,
         "per_ticker_details": per_ticker,
+        "detail": detail,
+        "levels_note": (
+            "Mọi mốc hỗ trợ/kháng cự tính trên GIÁ ĐÓNG CỬA (feed không có high/low "
+            "trong phiên) — không phải pivot theo đỉnh/đáy nến."
+        ),
         "disclaimer": _COMPARE_DISCLAIMER,
     }
     if not include_series:
@@ -165,101 +214,163 @@ def compare_multiple_tickers(
     return result
 
 
+#: A gap smaller than this is noise, not a difference worth asserting.
+#: Without these, a 23.9% vs 23.5% drawdown produced a confident claim that one
+#: ticker was materially more volatile than the other.
+_MATERIAL_GAP = {
+    "return_pct": 3.0,          # percentage points of 1-year return
+    "max_drawdown_pct": 3.0,    # percentage points of drawdown
+    "pct_from_low": 5.0,        # percentage points of recovery off the low
+    "vs_sma200_pct": 2.0,       # percentage points of distance from SMA200
+    "rsi": 5.0,                 # RSI points
+    "liquidity_ratio": 1.3,     # multiple of average turnover
+}
+
+
+def _rank_observation(
+    rows: list[dict],
+    field: str,
+    heading: str,
+    unit: str,
+    *,
+    higher_is: str,
+    threshold: float,
+    absolute: bool = False,
+    decimals: int = 2,
+) -> str | None:
+    """Rank every ticker on one metric, asserting a difference only if material.
+
+    Covers all N tickers rather than the first two: an earlier version indexed
+    ``[0]`` and ``[1]`` only, so a three-way comparison produced a conclusion
+    about two of the three and silently ignored the rest.
+    """
+    scored = []
+    for row in rows:
+        value = finite(row.get(field))
+        if value is None:
+            continue
+        scored.append((row["ticker"], abs(value) if absolute else value))
+    if len(scored) < 2:
+        return None
+
+    scored.sort(key=lambda item: -item[1])
+    spread = scored[0][1] - scored[-1][1]
+    listing = ", ".join(f"{name} {value:+.{decimals}f}{unit}" for name, value in scored)
+    if absolute:
+        listing = ", ".join(f"{name} {value:.{decimals}f}{unit}" for name, value in scored)
+
+    if spread < threshold:
+        return (
+            f"{heading}: các mã gần như tương đương ({listing}) — "
+            f"chênh lệch {spread:.{decimals}f}{unit} chưa đủ để coi là khác biệt."
+        )
+    best, worst = scored[0][0], scored[-1][0]
+    return (
+        f"{heading}: {best} {higher_is} nhất, {worst} thấp nhất ({listing})."
+    )
+
+
 def _assess_relative_strength(
     table_52w: list[dict],
     table_ma: list[dict],
-    table_pivots: list[dict],
+    table_levels: list[dict],
 ) -> dict:
-    observations = []
-    if len(table_52w) >= 2:
-        t1 = table_52w[0]
-        t2 = table_52w[1]
-        m1 = table_ma[0] if len(table_ma) > 0 else {}
-        m2 = table_ma[1] if len(table_ma) > 1 else {}
-        p1 = table_pivots[0] if len(table_pivots) > 0 else {}
-        p2 = table_pivots[1] if len(table_pivots) > 1 else {}
+    """Head-to-head observations across every compared ticker."""
+    observations: list[str] = []
+    if len(table_52w) < 2:
+        return {
+            "observations": [],
+            "summary": "Cần ít nhất 2 mã có đủ dữ liệu để so sánh.",
+            "tickers_assessed": [row["ticker"] for row in table_52w],
+        }
 
-        # 1. 52w Performance & Drawdown
-        ret1 = t1.get("return_pct") or 0.0
-        ret2 = t2.get("return_pct") or 0.0
-        if ret1 != ret2:
-            better_ret = t1['ticker'] if ret1 > ret2 else t2['ticker']
-            worse_ret = t2['ticker'] if ret1 > ret2 else t1['ticker']
+    ma_by_ticker = {row["ticker"]: row for row in table_ma}
+    levels_by_ticker = {row["ticker"]: row for row in table_levels}
+
+    # 1. One-year performance and risk
+    for spec in (
+        ("return_pct", "Hiệu suất ~250 phiên", "%", "cao", False, 2),
+        ("max_drawdown_pct", "Mức sụt giảm cực đại", "%", "sâu", True, 1),
+        ("pct_from_low", "Mức phục hồi từ đáy", "%", "mạnh", False, 1),
+    ):
+        field, heading, unit, higher_is, absolute, decimals = spec
+        note = _rank_observation(
+            table_52w, field, heading, unit,
+            higher_is=higher_is, threshold=_MATERIAL_GAP[field],
+            absolute=absolute, decimals=decimals,
+        )
+        if note:
+            observations.append(note)
+
+    # 2. Trend structure: who is above which moving averages
+    for label, field in (("SMA20", "vs_sma20_pct"), ("SMA50", "vs_sma50_pct"), ("SMA200", "vs_sma200_pct")):
+        above = [r["ticker"] for r in table_ma if finite(r.get(field)) is not None and r[field] > 0]
+        below = [r["ticker"] for r in table_ma if finite(r.get(field)) is not None and r[field] <= 0]
+        if above and below:
+            detail = ", ".join(
+                f"{r['ticker']} {r[field]:+.2f}%"
+                for r in table_ma if finite(r.get(field)) is not None
+            )
             observations.append(
-                f"Hiệu suất 52 tuần: {better_ret} vượt trội hơn {worse_ret} ({max(ret1, ret2):+.2f}% vs {min(ret1, ret2):+.2f}%)."
+                f"Vị thế so với {label}: {', '.join(above)} đứng trên, "
+                f"{', '.join(below)} nằm dưới ({detail})."
             )
 
-        dd1 = abs(t1.get("max_drawdown_pct") or 0)
-        dd2 = abs(t2.get("max_drawdown_pct") or 0)
-        if dd1 != dd2:
-            higher_dd = t1['ticker'] if dd1 > dd2 else t2['ticker']
-            lower_dd = t2['ticker'] if dd1 > dd2 else t1['ticker']
+    note = _rank_observation(
+        table_ma, "vs_sma200_pct", "Kênh giá dài hạn (khoảng cách SMA200)", "%",
+        higher_is="tích cực", threshold=_MATERIAL_GAP["vs_sma200_pct"],
+    )
+    if note:
+        observations.append(note)
+
+    # 3. Momentum
+    note = _rank_observation(
+        table_ma, "rsi", "Xung lực RSI(14)", "",
+        higher_is="cao", threshold=_MATERIAL_GAP["rsi"], absolute=True, decimals=1,
+    )
+    if note:
+        observations.append(note)
+
+    positive = [r["ticker"] for r in table_ma if finite(r.get("macd_hist")) is not None and r["macd_hist"] > 0]
+    negative = [r["ticker"] for r in table_ma if finite(r.get("macd_hist")) is not None and r["macd_hist"] <= 0]
+    if positive and negative:
+        detail = ", ".join(
+            f"{r['ticker']} {r['macd_hist_pct_of_close']:+.3f}% giá"
+            for r in table_ma if finite(r.get("macd_hist_pct_of_close")) is not None
+        )
+        observations.append(
+            f"Động lượng MACD: histogram dương ở {', '.join(positive)}, âm ở {', '.join(negative)}"
+            + (f" (chuẩn hóa theo giá: {detail})." if detail else ".")
+        )
+
+    # 4. Position between measured support and resistance
+    for row in table_levels:
+        if row.get("position_desc"):
+            observations.append(f"Vị thế hỗ trợ/kháng cự {row['ticker']}: {row['position_desc']}")
+
+    # 5. Liquidity
+    turnovers = [
+        (row["ticker"], finite(row.get("avg_value_bil")))
+        for row in table_52w
+    ]
+    turnovers = [(name, value) for name, value in turnovers if value and value > 0]
+    if len(turnovers) >= 2:
+        turnovers.sort(key=lambda item: -item[1])
+        ratio = turnovers[0][1] / turnovers[-1][1]
+        listing = ", ".join(f"{name} {value:.1f} tỷ" for name, value in turnovers)
+        if ratio >= _MATERIAL_GAP["liquidity_ratio"]:
             observations.append(
-                f"Biên độ điều chỉnh: {higher_dd} có mức sụt giảm cực đại sâu hơn {lower_dd} ({max(dd1, dd2):.1f}% vs {min(dd1, dd2):.1f}%), thể hiện độ nhạy biến động cao hơn."
+                f"Quy mô thanh khoản: {turnovers[0][0]} cao gấp {ratio:.1f}x "
+                f"{turnovers[-1][0]} ({listing} VND/phiên)."
             )
-
-        # 2. Recovery from 52w Low
-        rec1 = t1.get("pct_from_low") or 0
-        rec2 = t2.get("pct_from_low") or 0
-        if rec1 != rec2:
-            stronger_rec = t1['ticker'] if rec1 > rec2 else t2['ticker']
-            weaker_rec = t2['ticker'] if rec1 > rec2 else t1['ticker']
+        else:
             observations.append(
-                f"Khả năng phục hồi sau đáy: {stronger_rec} phục hồi mạnh hơn {weaker_rec} ({max(rec1, rec2):+.1f}% vs {min(rec1, rec2):+.1f}%)."
+                f"Quy mô thanh khoản: các mã tương đương ({listing} VND/phiên)."
             )
-
-        # 3. MA Alignments & Positions
-        s20_1, s20_2 = m1.get("vs_sma20_pct"), m2.get("vs_sma20_pct")
-        s50_1, s50_2 = m1.get("vs_sma50_pct"), m2.get("vs_sma50_pct")
-        s200_1, s200_2 = m1.get("vs_sma200_pct"), m2.get("vs_sma200_pct")
-
-        if s20_1 is not None and s20_2 is not None:
-            if s20_1 > 0 and s20_2 <= 0:
-                observations.append(f"Ngắn hạn: {t1['ticker']} giữ được trên SMA20 ({s20_1:+.1f}%), trong khi {t2['ticker']} nằm dưới SMA20 ({s20_2:+.1f}%).")
-            elif s20_2 > 0 and s20_1 <= 0:
-                observations.append(f"Ngắn hạn: {t2['ticker']} giữ được trên SMA20 ({s20_2:+.1f}%), trong khi {t1['ticker']} nằm dưới SMA20 ({s20_1:+.1f}%).")
-
-        if s200_1 is not None and s200_2 is not None:
-            better_200 = t1['ticker'] if s200_1 > s200_2 else t2['ticker']
-            worse_200 = t2['ticker'] if s200_1 > s200_2 else t1['ticker']
-            b_val = max(s200_1, s200_2)
-            w_val = min(s200_1, s200_2)
-            observations.append(
-                f"Kênh giá dài hạn: {better_200} duy trì cấu trúc vượt trội hơn {worse_200} so với SMA200 ({b_val:+.1f}% vs {w_val:+.1f}%)."
-            )
-
-        # 4. Momentum (RSI & MACD)
-        rsi1, rsi2 = m1.get("rsi"), m2.get("rsi")
-        if rsi1 is not None and rsi2 is not None:
-            diff_rsi = abs(rsi1 - rsi2)
-            if diff_rsi >= 3.0:
-                higher_rsi = t1['ticker'] if rsi1 > rsi2 else t2['ticker']
-                lower_rsi = t2['ticker'] if rsi1 > rsi2 else t1['ticker']
-                observations.append(f"Xung lực RSI(14): {higher_rsi} nhỉnh hơn {lower_rsi} ({max(rsi1, rsi2):.1f} vs {min(rsi1, rsi2):.1f}).")
-
-        hist1, hist2 = m1.get("macd_hist"), m2.get("macd_hist")
-        if hist1 is not None and hist2 is not None:
-            if hist1 > 0 >= hist2:
-                observations.append(f"Động lượng MACD: Histogram {t1['ticker']} dương ({hist1:+.1f}), trong khi {t2['ticker']} đang chịu xung lực âm ({hist2:+.1f}).")
-            elif hist2 > 0 >= hist1:
-                observations.append(f"Động lượng MACD: Histogram {t2['ticker']} dương ({hist2:+.1f}), trong khi {t1['ticker']} đang chịu xung lực âm ({hist1:+.1f}).")
-
-        # 5. Pivot Points positioning
-        pos1, pos2 = p1.get("position_desc"), p2.get("position_desc")
-        if pos1 and pos2:
-            observations.append(f"Vị thế Pivot: {t1['ticker']} {pos1.lower()}; {t2['ticker']} {pos2.lower()}.")
-
-        # 6. Liquidity (Turnover)
-        val1 = t1.get("avg_value_bil") or 0.0
-        val2 = t2.get("avg_value_bil") or 0.0
-        if val1 > 0 and val2 > 0:
-            high_val_t = t1['ticker'] if val1 > val2 else t2['ticker']
-            low_val_t = t2['ticker'] if val1 > val2 else t1['ticker']
-            ratio = max(val1, val2) / min(val1, val2) if min(val1, val2) > 0 else 1.0
-            if ratio >= 1.3:
-                observations.append(f"Quy mô thanh khoản: {high_val_t} có giá trị khớp lệnh bình quân cao gấp {ratio:.1f}x so với {low_val_t} ({max(val1, val2):.1f} tỷ vs {min(val1, val2):.1f} tỷ VND/phiên).")
 
     return {
         "observations": observations,
         "summary": " ".join(observations),
+        "tickers_assessed": [row["ticker"] for row in table_52w],
+        "material_gap_thresholds": _MATERIAL_GAP,
     }

@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from indicators import finite, insufficient, latest, require, safe_div
+from indicators import insufficient, require
 
 
 def stats_52w(
@@ -28,7 +28,12 @@ def stats_52w(
     window : int
         Lookback window in trading sessions, default 250 (~1 calendar year).
     """
-    marker = require(frame["close"], min(window, 20), f"stats_52w({window})")
+    # Require most of the requested window, not a flat 20 rows. With the old
+    # floor a 20-row history produced a "52-week high" and a "1-year return",
+    # names that describe a statistic the data cannot support — the same
+    # shorter-window substitution the engine refuses everywhere else.
+    minimum = max(20, int(window * 0.8))
+    marker = require(frame["close"], minimum, f"stats_52w({window})")
     if marker:
         return marker
 
@@ -80,8 +85,19 @@ def stats_52w(
         for v in values
     ]
 
+    # Name the statistic after the window it was actually measured over, so a
+    # consumer cannot present a 120-session extreme as a 52-week one.
+    sessions = len(values)
+    approx_weeks = round(sessions / 5)
     return {
-        "window_sessions": len(values),
+        "window_sessions": sessions,
+        "window_requested": window,
+        "window_label_vi": f"{sessions} phiên (~{approx_weeks} tuần)",
+        "is_full_52w": sessions >= 240,
+        "basis_note": (
+            "Đỉnh/đáy tính trên GIÁ ĐÓNG CỬA, không phải đỉnh/đáy trong phiên "
+            "(feed không có high/low)."
+        ),
         "date_start": dates[0],
         "date_end": dates[-1],
         "latest_close": latest_close,

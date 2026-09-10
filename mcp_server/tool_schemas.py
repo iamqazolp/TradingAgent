@@ -66,7 +66,12 @@ class RowSource(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    rows: list[PriceRow] | str | None = None
+    # Deliberately NOT `| str`: the before-validator below accepts a stringified
+    # list from local models and converts it, but leaving `str` in the annotation
+    # also let an unconvertible string pass validation and reach the engine,
+    # where iterating it per-row raised AttributeError instead of a readable
+    # error the model could act on.
+    rows: list[PriceRow] | None = None
     ticker: Ticker | None = None
     lookback_days: int = Field(
         default=300,
@@ -77,21 +82,31 @@ class RowSource(BaseModel):
 
     @field_validator("rows", mode="before")
     @classmethod
-    def _normalize_rows(cls, value: Any) -> list[PriceRow] | None:
-        """Normalize stringified None/null/empty from local LLMs (Ollama etc.)."""
+    def _normalize_rows(cls, value: Any) -> list | None:
+        """Normalize stringified None/null/empty/JSON from local LLMs (Ollama etc.).
+
+        A string that parses to a single row object becomes a one-item list, and
+        anything else unparseable becomes None so the model is told to pass
+        `ticker` instead — rather than the string surviving into the engine.
+        """
         if value is None:
             return None
         if isinstance(value, str):
-            v = value.strip().lower()
-            if v in ("none", "null", "[]", "''", '""', ""):
+            stripped = value.strip()
+            if stripped.lower() in ("none", "null", "[]", "''", '""', ""):
                 return None
             try:
                 import json
-                parsed = json.loads(value)
-                if isinstance(parsed, list):
-                    return parsed if len(parsed) > 0 else None
+                parsed = json.loads(stripped)
             except Exception:
                 return None
+            if isinstance(parsed, list):
+                return parsed or None
+            if isinstance(parsed, dict):
+                return [parsed]
+            return None
+        if isinstance(value, dict):
+            return [value]
         if isinstance(value, list) and len(value) == 0:
             return None
         return value
@@ -147,13 +162,62 @@ class GetPriceDataInput(BaseModel):
         return self
 
 
-class ComputeIndicatorsInput(RowSource):
-    """Input for `compute_indicators`."""
+def _parse_group_list(value: Any) -> list[str]:
+    """Coerce whatever a model sent into a validated list of group names.
+
+    Local models send this field as a bare string, a comma-joined string, or a
+    string holding a Python/JSON list literal. Shared by every tool that takes
+    `groups` — it was previously duplicated verbatim in two schema classes,
+    so a fix to one silently left the other behind.
+    """
+    if isinstance(value, str):
+        text = value.strip()
+        if (text.startswith("[") and text.endswith("]")) or (
+            text.startswith("(") and text.endswith(")")
+        ):
+            import ast
+            try:
+                parsed = ast.literal_eval(text)
+                if isinstance(parsed, (list, tuple)):
+                    items = [str(x).strip() for x in parsed]
+                else:
+                    items = [str(parsed).strip()]
+            except Exception:
+                cleaned = text.strip("[]()").replace('"', "").replace("'", "")
+                items = [g.strip().strip("'\"") for g in cleaned.split(",") if g.strip().strip("'\"")]
+        else:
+            items = [g.strip().strip("'\"") for g in text.split(",") if g.strip().strip("'\"")]
+        value = items
+    elif isinstance(value, (tuple, set)):
+        value = list(value)
+    elif not isinstance(value, list):
+        value = [value]
+
+    unknown = [g for g in value if g not in GROUPS]
+    if unknown:
+        raise ValueError(
+            f"unknown group(s): {', '.join(unknown)}; valid: {', '.join(GROUPS)}"
+        )
+    return list(dict.fromkeys(value)) or list(GROUPS)
+
+
+class GroupSelection(RowSource):
+    """A RowSource that also takes a subset of indicator groups."""
 
     groups: list[GroupName] | str = Field(
         default_factory=lambda: list(GROUPS),
         description=f"subset of: {', '.join(GROUPS)}",
     )
+
+    @field_validator("groups", mode="before")
+    @classmethod
+    def _known_groups(cls, value: Any) -> list[str]:
+        return _parse_group_list(value)
+
+
+class ComputeIndicatorsInput(GroupSelection):
+    """Input for `compute_indicators`."""
+
     params: dict[str, Any] | None = Field(
         default=None,
         description=(
@@ -165,37 +229,6 @@ class ComputeIndicatorsInput(RowSource):
     series_tail: int = Field(
         default=20, ge=0, le=250, description="points of each series to return; 0 for none. Default 20 provides ~1 month of history for divergence and trajectory analysis."
     )
-
-    @field_validator("groups", mode="before")
-    @classmethod
-    def _known_groups(cls, value: Any) -> list[str]:
-        if isinstance(value, str):
-            v = value.strip()
-            if (v.startswith("[") and v.endswith("]")) or (v.startswith("(") and v.endswith(")")):
-                import ast
-                try:
-                    parsed = ast.literal_eval(v)
-                    if isinstance(parsed, (list, tuple)):
-                        v_list = [str(x).strip() for x in parsed]
-                    else:
-                        v_list = [str(parsed).strip()]
-                except Exception:
-                    v_clean = v.strip("[]()").replace('"', "").replace("'", "")
-                    v_list = [g.strip().strip("'\"") for g in v_clean.split(",") if g.strip().strip("'\"")]
-            else:
-                v_list = [g.strip().strip("'\"") for g in v.split(",") if g.strip().strip("'\"")]
-            value = v_list
-        elif isinstance(value, (tuple, set)):
-            value = list(value)
-        elif not isinstance(value, list):
-            value = [value]
-
-        unknown = [g for g in value if g not in GROUPS]
-        if unknown:
-            raise ValueError(
-                f"unknown group(s): {', '.join(unknown)}; valid: {', '.join(GROUPS)}"
-            )
-        return list(dict.fromkeys(value)) or list(GROUPS)
 
 
 class GetFlowSummaryInput(RowSource):
@@ -231,55 +264,37 @@ class AnalyzeMultiHorizonInput(BaseModel):
         default=5, ge=0, le=100,
         description="Weekly series tail length (default 5).",
     )
+    detail: Literal["compact", "full"] = Field(
+        default="compact",
+        description=(
+            "'compact' (default) omits fields that duplicate data found elsewhere "
+            "in the same response, roughly halving the payload. 'full' keeps "
+            "everything — only needed when a caller wants the redundant copies."
+        ),
+    )
 
     @field_validator("ticker")
     @classmethod
     def _upper(cls, value: str) -> str:
         return value.upper()
 
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _normalize_detail(cls, value: Any) -> Any:
+        """Tolerate case and stray quoting from local models."""
+        if isinstance(value, str):
+            cleaned = value.strip().strip("'\"").lower()
+            return cleaned or "compact"
+        return value
 
-class ComputeWeeklyInput(RowSource):
+
+class ComputeWeeklyInput(GroupSelection):
     """Input for `compute_weekly_indicators`."""
 
-    groups: list[GroupName] | str = Field(
-        default_factory=lambda: list(GROUPS),
-        description=f"subset of: {', '.join(GROUPS)}",
-    )
     series_tail: int = Field(
         default=26, ge=0, le=100,
         description="points of each weekly series to return; default 26 (~6 months).",
     )
-
-    @field_validator("groups", mode="before")
-    @classmethod
-    def _known_groups(cls, value: Any) -> list[str]:
-        if isinstance(value, str):
-            v = value.strip()
-            if (v.startswith("[") and v.endswith("]")) or (v.startswith("(") and v.endswith(")")):
-                import ast
-                try:
-                    parsed = ast.literal_eval(v)
-                    if isinstance(parsed, (list, tuple)):
-                        v_list = [str(x).strip() for x in parsed]
-                    else:
-                        v_list = [str(parsed).strip()]
-                except Exception:
-                    v_clean = v.strip("[]()").replace('"', "").replace("'", "")
-                    v_list = [g.strip().strip("'\"") for g in v_clean.split(",") if g.strip().strip("'\"")]
-            else:
-                v_list = [g.strip().strip("'\"") for g in v.split(",") if g.strip().strip("'\"")]
-            value = v_list
-        elif isinstance(value, (tuple, set)):
-            value = list(value)
-        elif not isinstance(value, list):
-            value = [value]
-
-        unknown = [g for g in value if g not in GROUPS]
-        if unknown:
-            raise ValueError(
-                f"unknown group(s): {', '.join(unknown)}; valid: {', '.join(GROUPS)}"
-            )
-        return list(dict.fromkeys(value)) or list(GROUPS)
 
 
 class CompareTickersInput(BaseModel):
@@ -296,6 +311,21 @@ class CompareTickersInput(BaseModel):
         le=5000,
         description="Trading sessions to look back (default 250 for ~1 year performance analysis).",
     )
+    detail: Literal["compact", "full"] = Field(
+        default="compact",
+        description=(
+            "'compact' (default) omits the full per-ticker indicator dump, which "
+            "no comparison table needs. 'full' includes it."
+        ),
+    )
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _normalize_detail(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            cleaned = value.strip().strip("'\"").lower()
+            return cleaned or "compact"
+        return value
 
     @field_validator("tickers", mode="before")
     @classmethod

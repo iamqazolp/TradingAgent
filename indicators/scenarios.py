@@ -1,18 +1,32 @@
-"""Scenario generation from technical analysis state.
+"""Conditional scenarios (bullish / neutral / bearish) from the technical state.
 
-Produces 2–3 actionable scenarios (bullish / neutral / bearish) based on
-the current horizon analysis and computed indicator values.  Each scenario
-includes concrete trigger conditions, target price zones, and invalidation
-levels — all derived from actual SMA / Bollinger / volatility numbers.
+Each scenario is an "if… then…" projection built from levels that were actually
+measured — moving averages, Bollinger bands, swing closes and N-session close
+extremes, all supplied by :mod:`indicators.levels`. When a role has no such
+level (no resistance above the close, say), the field is ``None`` with a reason
+attached.
 
-**Important**: scenarios are conditional ("if… then…") projections, **not**
-price predictions.  The probability field is a qualitative label reflecting
-how many current signals support the scenario, not a statistical estimate.
+Two earlier behaviours are deliberately gone:
+
+* **No invented levels.** Targets, triggers and invalidation points used to fall
+  back to ``close * 1.05``, ``close * 0.90`` and similar, and were published
+  under a ``basis`` of "kháng cự gần nhất" — naming a level that had never been
+  computed. Nothing downstream could tell an SMA from a multiple of the close.
+* **No ``probability`` field.** It held ``"high"``/``"medium"``/``"low"`` while
+  the consuming skill rendered it as ``X%``, so a qualitative count of agreeing
+  horizons was printed as a statistical estimate. The field is now
+  ``likelihood`` with an explicit ``likelihood_basis`` and an
+  ``is_probability_estimate: false`` marker.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from indicators import finite, is_insufficient
+
+_NOT_A_PROBABILITY = (
+    "Nhãn khả năng phản ánh SỐ KHUNG THỜI GIAN đang ủng hộ kịch bản, "
+    "KHÔNG phải xác suất thống kê. Không được quy đổi thành phần trăm."
+)
 
 
 def generate_scenarios(
@@ -20,45 +34,37 @@ def generate_scenarios(
     weekly_compute: dict | None,
     horizons: dict,
     latest_close: float,
+    levels: dict | None = None,
 ) -> dict:
-    """Generate 2–3 conditional scenarios from the current technical state.
-
-    Returns
-    -------
-    dict
-        ``scenarios`` (list of scenario dicts), ``dominant_scenario`` (name
-        of the scenario with the most supporting signals).
-    """
+    """Build three conditional scenarios from the current technical state."""
     if latest_close is None or latest_close <= 0:
-        return {"scenarios": [], "dominant_scenario": None,
-                "error": "invalid_close_price"}
+        return {
+            "scenarios": [],
+            "dominant_scenario": None,
+            "error": "invalid_close_price",
+        }
 
     short = horizons.get("short_term", {})
     mid = horizons.get("mid_term", {})
     long = horizons.get("long_term", {})
-    alignment = horizons.get("horizon_alignment", "mixed_signals")
+    alignment = horizons.get("alignment") or {}
 
-    # Collect all available SMA / Bollinger levels for target/stop computation
-    all_sma = _merge_sma_values(short, mid, long)
-    bb = short.get("bollinger") or mid.get("bollinger")
-    vol = short.get("volatility") or mid.get("volatility")
+    supports = _levels_of(levels, "supports")
+    resistances = _levels_of(levels, "resistances")
 
     scenarios = [
-        _bullish_scenario(latest_close, all_sma, bb, vol, short, mid, long, alignment),
-        _neutral_scenario(latest_close, all_sma, bb, vol, short, mid, long, alignment),
-        _bearish_scenario(latest_close, all_sma, bb, vol, short, mid, long, alignment),
+        _bullish_scenario(latest_close, supports, resistances, short, mid, long),
+        _neutral_scenario(latest_close, supports, resistances, short, mid, long, alignment),
+        _bearish_scenario(latest_close, supports, resistances, short, mid, long),
     ]
-
-    # Determine dominant scenario
-    dominant = _dominant(scenarios, alignment)
 
     return {
         "scenarios": scenarios,
-        "dominant_scenario": dominant,
-        "note": (
-            "Scenarios are conditional projections (if… then…), "
-            "not price predictions.  Probability labels reflect "
-            "how many current signals support each scenario."
+        "dominant_scenario": _dominant(scenarios, alignment),
+        "likelihood_note": _NOT_A_PROBABILITY,
+        "levels_note": (
+            "Mọi mốc giá trong các kịch bản đều là mức đã tính được từ dữ liệu "
+            "(MA, Bollinger, đỉnh/đáy close). Không có mốc nào được suy diễn hay làm tròn tùy ý."
         ),
     }
 
@@ -66,269 +72,310 @@ def generate_scenarios(
 # ------------------------------------------------------------------ helpers
 
 
-def _merge_sma_values(short: dict, mid: dict, long: dict) -> dict[str, float]:
-    """Collect all SMA values from horizon analyses into one flat dict."""
-    merged: dict[str, float] = {}
-    for h in (short, mid, long):
-        for k, v in h.get("sma_values", {}).items():
-            if v is not None:
-                merged[k] = v
-    return merged
+def _levels_of(levels: dict | None, side: str) -> list[dict]:
+    if not isinstance(levels, dict) or is_insufficient(levels):
+        return []
+    found = levels.get(side)
+    return found if isinstance(found, list) else []
 
 
-def _nearest_above(close: float, levels: dict[str, float]) -> tuple[str, float] | None:
-    """Closest SMA/level above close."""
-    above = [(k, v) for k, v in levels.items() if v > close]
-    return min(above, key=lambda x: x[1]) if above else None
+def _nth(levels: list[dict], index: int) -> dict | None:
+    return levels[index] if len(levels) > index else None
 
 
-def _nearest_below(close: float, levels: dict[str, float]) -> tuple[str, float] | None:
-    """Closest SMA/level below close."""
-    below = [(k, v) for k, v in levels.items() if v < close]
-    return max(below, key=lambda x: x[1]) if below else None
+def _directions(short: dict, mid: dict, long: dict) -> list[int | None]:
+    out: list[int | None] = []
+    for horizon in (short, mid, long):
+        strength = horizon.get("signal_strength", "neutral")
+        if strength == "insufficient_data":
+            out.append(None)
+        elif "bullish" in strength:
+            out.append(1)
+        elif "bearish" in strength:
+            out.append(-1)
+        else:
+            out.append(0)
+    return out
 
 
-def _second_above(close: float, levels: dict[str, float]) -> tuple[str, float] | None:
-    """Second closest level above close."""
-    above = sorted([(k, v) for k, v in levels.items() if v > close], key=lambda x: x[1])
-    return above[1] if len(above) > 1 else None
-
-
-def _second_below(close: float, levels: dict[str, float]) -> tuple[str, float] | None:
-    """Second closest level below close."""
-    below = sorted([(k, v) for k, v in levels.items() if v < close], key=lambda x: x[1], reverse=True)
-    return below[1] if len(below) > 1 else None
-
-
-def _vol_stop(close: float, vol_pct: float | None, multiplier: float = 2.0) -> float | None:
-    """Stop-loss level based on close-to-close volatility."""
-    if vol_pct is None or vol_pct <= 0:
-        return None
-    return round(close * (1 - vol_pct / 100 * multiplier), 0)
-
-
-def _count_bullish(short: dict, mid: dict, long: dict) -> int:
-    """Count how many horizons lean bullish."""
-    count = 0
-    for h in (short, mid, long):
-        s = h.get("signal_strength", "neutral")
-        if "bullish" in s:
-            count += 1
-    return count
-
-
-def _count_bearish(short: dict, mid: dict, long: dict) -> int:
-    count = 0
-    for h in (short, mid, long):
-        s = h.get("signal_strength", "neutral")
-        if "bearish" in s:
-            count += 1
-    return count
-
-
-def _probability(supporting: int) -> str:
+def _likelihood(supporting: int, scored: int) -> tuple[str, str]:
+    """Qualitative label plus the count it came from."""
+    if scored == 0:
+        return "thấp", "không có khung nào đủ dữ liệu"
+    basis = f"{supporting}/{scored} khung thời gian ủng hộ"
     if supporting >= 3:
-        return "high"
-    if supporting >= 2:
-        return "medium"
-    return "low"
+        return "cao", basis
+    if supporting == 2:
+        return "trung bình", basis
+    return "thấp", basis
+
+
+def _level_ref(entry: dict | None, missing: str) -> dict:
+    """A level reference, or an explicit absence with a reason."""
+    if entry is None:
+        return {"level": None, "basis": None, "unavailable_reason": missing}
+    return {
+        "level": entry["level"],
+        "basis": entry["basis"],
+        "confluence": entry.get("confluence"),
+        "distance_pct": entry.get("distance_pct"),
+    }
+
+
+def _pct_from(close: float, level: float | None) -> float | None:
+    if level is None or close <= 0:
+        return None
+    return round((level - close) / close * 100, 2)
 
 
 # ------------------------------------------------------------------ scenario builders
 
 
 def _bullish_scenario(
-    close: float, sma: dict, bb: dict | None, vol: float | None,
-    short: dict, mid: dict, long: dict, alignment: str,
+    close: float, supports: list[dict], resistances: list[dict],
+    short: dict, mid: dict, long: dict,
 ) -> dict:
-    """Bullish (positive) scenario."""
-    bulls = _count_bullish(short, mid, long)
+    directions = _directions(short, mid, long)
+    scored = [d for d in directions if d is not None]
+    bulls = sum(1 for d in scored if d > 0)
+    likelihood, basis = _likelihood(bulls, len(scored))
 
-    # Target zone: next resistance → second resistance
-    r1 = _nearest_above(close, sma)
-    r2 = _second_above(close, sma)
-    bb_upper = bb.get("upper") if bb else None
+    trigger = _nth(resistances, 0)
+    target_1 = _nth(resistances, 1)
+    target_2 = _nth(resistances, 2)
+    invalidation = _nth(supports, 0)
 
-    target_from = r1[1] if r1 else (bb_upper if bb_upper else round(close * 1.05, 0))
-    target_to = r2[1] if r2 else (round(close * 1.10, 0))
-    if target_to <= target_from:
-        target_to = round(target_from * 1.05, 0)
-
-    # Trigger: breaking nearest resistance with volume
-    trigger_level = r1[1] if r1 else round(close * 1.03, 0)
-    trigger_name = r1[0] if r1 else "kháng cự gần nhất"
-
-    # Invalidation: losing nearest support
-    s1 = _nearest_below(close, sma)
-    inv_level = s1[1] if s1 else _vol_stop(close, vol) or round(close * 0.95, 0)
-    inv_name = s1[0] if s1 else "hỗ trợ volatility"
-
-    # Conditions
-    conditions = []
-    rsi = short.get("rsi")
-    if rsi and rsi < 70:
-        conditions.append(f"RSI ({rsi:.0f}) chưa quá mua, còn dư địa tăng")
-    macd = short.get("macd")
-    if macd and macd.get("histogram") and macd["histogram"] > 0:
-        conditions.append("MACD histogram dương, xung lực tăng")
-    if "bullish" in str(mid.get("trend_bias", "")):
-        conditions.append("Xu hướng trung hạn tích cực")
-    if long.get("foreign_stance") == "net_buying":
-        conditions.append("Khối ngoại mua ròng hỗ trợ dài hạn")
-    if not conditions:
-        conditions.append("Giá duy trì trên đường SMA ngắn hạn")
+    conditions = _bullish_conditions(short, mid, long)
 
     return {
         "name": "Kịch bản tích cực",
         "bias": "bullish",
-        "probability": _probability(bulls),
-        "supporting_signals": bulls,
-        "conditions": "; ".join(conditions),
-        "trigger": f"Vượt {trigger_name} ({trigger_level:,.0f} VND) với volume > 120% bình quân 20 phiên",
+        "likelihood": likelihood,
+        "likelihood_basis": basis,
+        "is_probability_estimate": False,
+        "supporting_horizons": bulls,
+        "horizons_scored": len(scored),
+        "conditions": conditions,
+        "conditions_text": "; ".join(conditions) if conditions else None,
+        "trigger": {
+            **_level_ref(trigger, "không còn mức kháng cự nào phía trên giá hiện tại"),
+            "condition": (
+                f"Đóng cửa vượt {trigger['level']:,.0f} VND ({trigger['basis']}) "
+                f"kèm khối lượng trên trung bình 20 phiên"
+                if trigger else None
+            ),
+        },
         "target_zone": {
-            "from": round(target_from, 0),
-            "to": round(target_to, 0),
-            "upside_pct": round((target_to - close) / close * 100, 1),
+            "from": target_1["level"] if target_1 else None,
+            "from_basis": target_1["basis"] if target_1 else None,
+            "to": target_2["level"] if target_2 else None,
+            "to_basis": target_2["basis"] if target_2 else None,
+            "upside_pct_to_first": _pct_from(close, target_1["level"] if target_1 else None),
+            "upside_pct_to_second": _pct_from(close, target_2["level"] if target_2 else None),
+            "unavailable_reason": (
+                None if target_1 else "chưa xác định được mức kháng cự tiếp theo từ dữ liệu"
+            ),
         },
         "invalidation": {
-            "level": round(inv_level, 0),
-            "basis": inv_name,
-            "description": f"Giá đóng cửa dưới {inv_name} ({inv_level:,.0f} VND)",
-        },
-    }
-
-
-def _neutral_scenario(
-    close: float, sma: dict, bb: dict | None, vol: float | None,
-    short: dict, mid: dict, long: dict, alignment: str,
-) -> dict:
-    """Neutral (consolidation / range-bound) scenario."""
-    neutrals = 3 - _count_bullish(short, mid, long) - _count_bearish(short, mid, long)
-    # Neutral scenario is dominant when signals are mixed
-    supporting = max(1, neutrals + (1 if "mixed" in alignment else 0))
-
-    # Range: nearest support → nearest resistance
-    s1 = _nearest_below(close, sma)
-    r1 = _nearest_above(close, sma)
-    bb_lower = bb.get("lower") if bb else None
-    bb_upper = bb.get("upper") if bb else None
-
-    range_low = s1[1] if s1 else (bb_lower if bb_lower else round(close * 0.97, 0))
-    range_high = r1[1] if r1 else (bb_upper if bb_upper else round(close * 1.03, 0))
-
-    conditions = []
-    if bb and bb.get("squeeze"):
-        conditions.append("Bollinger Bands co thắt (squeeze) — tích lũy năng lượng")
-    if "mixed" in alignment or "divergent" in alignment:
-        conditions.append("Tín hiệu đa khung phân kỳ, thiếu đồng thuận hướng rõ ràng")
-    rsi = short.get("rsi")
-    if rsi and 40 <= rsi <= 60:
-        conditions.append(f"RSI ({rsi:.0f}) vùng trung tính, không hỗ trợ hướng nào")
-    if not conditions:
-        conditions.append("Giá dao động giữa hỗ trợ và kháng cự gần nhất")
-
-    return {
-        "name": "Kịch bản tích lũy / đi ngang",
-        "bias": "neutral",
-        "probability": _probability(supporting),
-        "supporting_signals": supporting,
-        "conditions": "; ".join(conditions),
-        "trigger": "Giá tiếp tục dao động trong biên độ hẹp, volume co lại",
-        "range": {
-            "low": round(range_low, 0),
-            "high": round(range_high, 0),
-        },
-        "breakout_watch": {
-            "bullish_break": f"Vượt {range_high:,.0f} VND với volume đột biến",
-            "bearish_break": f"Mất {range_low:,.0f} VND trên close",
+            **_level_ref(invalidation, "không còn mức hỗ trợ nào phía dưới giá hiện tại"),
+            "condition": (
+                f"Kịch bản bị phủ định nếu đóng cửa dưới {invalidation['level']:,.0f} VND "
+                f"({invalidation['basis']})"
+                if invalidation else None
+            ),
         },
     }
 
 
 def _bearish_scenario(
-    close: float, sma: dict, bb: dict | None, vol: float | None,
-    short: dict, mid: dict, long: dict, alignment: str,
+    close: float, supports: list[dict], resistances: list[dict],
+    short: dict, mid: dict, long: dict,
 ) -> dict:
-    """Bearish (negative) scenario."""
-    bears = _count_bearish(short, mid, long)
+    directions = _directions(short, mid, long)
+    scored = [d for d in directions if d is not None]
+    bears = sum(1 for d in scored if d < 0)
+    likelihood, basis = _likelihood(bears, len(scored))
 
-    # Target zone: nearest support → second support
-    s1 = _nearest_below(close, sma)
-    s2 = _second_below(close, sma)
-    bb_lower = bb.get("lower") if bb else None
+    trigger = _nth(supports, 0)
+    target_1 = _nth(supports, 1)
+    target_2 = _nth(supports, 2)
+    invalidation = _nth(resistances, 0)
 
-    target_to = s1[1] if s1 else (bb_lower if bb_lower else round(close * 0.95, 0))
-    target_from = s2[1] if s2 else round(close * 0.90, 0)
-    if target_from >= target_to:
-        target_from = round(target_to * 0.95, 0)
-
-    # Trigger: breaking nearest support
-    trigger_level = s1[1] if s1 else round(close * 0.97, 0)
-    trigger_name = s1[0] if s1 else "hỗ trợ gần nhất"
-
-    # Invalidation: reclaiming nearest resistance
-    r1 = _nearest_above(close, sma)
-    inv_level = r1[1] if r1 else round(close * 1.03, 0)
-    inv_name = r1[0] if r1 else "kháng cự gần nhất"
-
-    conditions = []
-    rsi = short.get("rsi")
-    if rsi and rsi < 40:
-        conditions.append(f"RSI ({rsi:.0f}) nghiêng về vùng yếu")
-    macd = short.get("macd")
-    if macd and macd.get("histogram") and macd["histogram"] < 0:
-        conditions.append("MACD histogram âm, xung lực giảm")
-    if "bearish" in str(mid.get("trend_bias", "")):
-        conditions.append("Xu hướng trung hạn tiêu cực")
-    if long.get("foreign_stance") == "net_selling":
-        conditions.append("Khối ngoại bán ròng tạo áp lực")
-    if not conditions:
-        conditions.append("Áp lực bán chiếm ưu thế")
+    conditions = _bearish_conditions(short, mid, long)
 
     return {
         "name": "Kịch bản tiêu cực",
         "bias": "bearish",
-        "probability": _probability(bears),
-        "supporting_signals": bears,
-        "conditions": "; ".join(conditions),
-        "trigger": f"Mất {trigger_name} ({trigger_level:,.0f} VND) trên close",
+        "likelihood": likelihood,
+        "likelihood_basis": basis,
+        "is_probability_estimate": False,
+        "supporting_horizons": bears,
+        "horizons_scored": len(scored),
+        "conditions": conditions,
+        "conditions_text": "; ".join(conditions) if conditions else None,
+        "trigger": {
+            **_level_ref(trigger, "không còn mức hỗ trợ nào phía dưới giá hiện tại"),
+            "condition": (
+                f"Đóng cửa mất {trigger['level']:,.0f} VND ({trigger['basis']})"
+                if trigger else None
+            ),
+        },
         "target_zone": {
-            "from": round(target_to, 0),
-            "to": round(target_from, 0),
-            "downside_pct": round((close - target_from) / close * 100, 1),
+            "from": target_1["level"] if target_1 else None,
+            "from_basis": target_1["basis"] if target_1 else None,
+            "to": target_2["level"] if target_2 else None,
+            "to_basis": target_2["basis"] if target_2 else None,
+            "downside_pct_to_first": _pct_from(close, target_1["level"] if target_1 else None),
+            "downside_pct_to_second": _pct_from(close, target_2["level"] if target_2 else None),
+            "unavailable_reason": (
+                None if target_1 else "chưa xác định được mức hỗ trợ tiếp theo từ dữ liệu"
+            ),
         },
         "invalidation": {
-            "level": round(inv_level, 0),
-            "basis": inv_name,
-            "description": f"Giá phục hồi đóng cửa trên {inv_name} ({inv_level:,.0f} VND)",
+            **_level_ref(invalidation, "không còn mức kháng cự nào phía trên giá hiện tại"),
+            "condition": (
+                f"Kịch bản bị phủ định nếu đóng cửa trên {invalidation['level']:,.0f} VND "
+                f"({invalidation['basis']})"
+                if invalidation else None
+            ),
         },
     }
+
+
+def _neutral_scenario(
+    close: float, supports: list[dict], resistances: list[dict],
+    short: dict, mid: dict, long: dict, alignment: dict,
+) -> dict:
+    directions = _directions(short, mid, long)
+    scored = [d for d in directions if d is not None]
+    neutrals = sum(1 for d in scored if d == 0)
+    conflicting = alignment.get("label") == "conflicting"
+    supporting = neutrals + (1 if conflicting else 0)
+    likelihood, basis = _likelihood(min(supporting, len(scored)), len(scored))
+    if conflicting:
+        basis += " (tín hiệu đa khung xung đột)"
+
+    low = _nth(supports, 0)
+    high = _nth(resistances, 0)
+
+    conditions: list[str] = []
+    bollinger = short.get("bollinger") or {}
+    if bollinger.get("squeeze"):
+        bandwidth = finite(bollinger.get("bandwidth_pct"))
+        conditions.append(
+            "Bollinger Bands co thắt"
+            + (f" (bandwidth = {bandwidth:.2f}%)" if bandwidth is not None else "")
+            + " — tích lũy năng lượng"
+        )
+    if conflicting:
+        conditions.append(alignment.get("summary") or "Tín hiệu đa khung xung đột")
+    rsi = finite(short.get("rsi"))
+    if rsi is not None and 45 <= rsi <= 55:
+        conditions.append(f"RSI(14) = {rsi:.1f} ở vùng trung tính, không ủng hộ hướng nào")
+
+    return {
+        "name": "Kịch bản tích lũy / đi ngang",
+        "bias": "neutral",
+        "likelihood": likelihood,
+        "likelihood_basis": basis,
+        "is_probability_estimate": False,
+        "supporting_horizons": neutrals,
+        "horizons_scored": len(scored),
+        "conditions": conditions,
+        "conditions_text": "; ".join(conditions) if conditions else None,
+        "range": {
+            "low": low["level"] if low else None,
+            "low_basis": low["basis"] if low else None,
+            "high": high["level"] if high else None,
+            "high_basis": high["basis"] if high else None,
+            "width_pct": (
+                round((high["level"] - low["level"]) / close * 100, 2)
+                if low and high and close > 0 else None
+            ),
+            "unavailable_reason": (
+                None if (low and high)
+                else "chưa xác định được đủ hai biên hỗ trợ/kháng cự từ dữ liệu"
+            ),
+        },
+        "breakout_watch": {
+            "bullish_break": (
+                f"Đóng cửa vượt {high['level']:,.0f} VND ({high['basis']}) kèm volume đột biến"
+                if high else None
+            ),
+            "bearish_break": (
+                f"Đóng cửa mất {low['level']:,.0f} VND ({low['basis']})"
+                if low else None
+            ),
+        },
+    }
+
+
+# ------------------------------------------------------------------ conditions
+
+
+#: How many supporting conditions to list per scenario. The full set repeats
+#: every matching component's evidence across three horizons, which made
+#: `conditions` one of the largest fields for little added meaning; the
+#: highest-weighted few carry the argument.
+_MAX_CONDITIONS = 4
+
+
+def _bullish_conditions(short: dict, mid: dict, long: dict) -> list[str]:
+    return _conditions_for(short, mid, long, 1)
+
+
+def _bearish_conditions(short: dict, mid: dict, long: dict) -> list[str]:
+    return _conditions_for(short, mid, long, -1)
+
+
+def _conditions_for(short: dict, mid: dict, long: dict, direction: int) -> list[str]:
+    """Highest-weighted evidence pointing one way, deduplicated across horizons.
+
+    Short and mid term share the daily RSI and MACD readings, so the same
+    sentence arrives twice under different horizon labels. Listing both would
+    overstate how much independent evidence there is.
+    """
+    gathered: list[tuple[float, str, str]] = []
+    for horizon, name in ((short, "ngắn hạn"), (mid, "trung hạn"), (long, "dài hạn")):
+        for comp in horizon.get("components", []):
+            if comp.get("direction") == direction and comp.get("evidence"):
+                gathered.append((comp.get("weight", 0.0), name, comp["evidence"]))
+
+    gathered.sort(key=lambda item: -item[0])
+    seen: set[str] = set()
+    out: list[str] = []
+    for _weight, name, evidence in gathered:
+        if evidence in seen:
+            continue
+        seen.add(evidence)
+        out.append(f"[{name}] {evidence}")
+        if len(out) >= _MAX_CONDITIONS:
+            break
+    return out
 
 
 # ------------------------------------------------------------------ dominant
 
 
-def _dominant(scenarios: list[dict], alignment: str) -> str:
-    """Identify which scenario has the most support."""
+def _dominant(scenarios: list[dict], alignment: dict) -> str:
+    """Name the scenario with the most horizon support."""
     if not scenarios:
         return "unknown"
 
-    # If all horizons agree, that scenario is dominant
-    if alignment == "all_bullish":
+    label = alignment.get("label")
+    if label == "all_bullish":
         return "Kịch bản tích cực"
-    if alignment == "all_bearish":
+    if label == "all_bearish":
         return "Kịch bản tiêu cực"
+    if label in ("conflicting", "all_neutral"):
+        return "Kịch bản tích lũy / đi ngang"
 
-    # Otherwise pick the scenario with the most supporting signals
-    best = max(scenarios, key=lambda s: s.get("supporting_signals", 0))
-
-    # Tie-break: if neutral and another have same count, prefer neutral
-    # (conservative principle when signals conflict)
-    top_count = best.get("supporting_signals", 0)
-    tied = [s for s in scenarios if s.get("supporting_signals", 0) == top_count]
+    best = max(scenarios, key=lambda s: s.get("supporting_horizons", 0))
+    top = best.get("supporting_horizons", 0)
+    tied = [s for s in scenarios if s.get("supporting_horizons", 0) == top]
     if len(tied) > 1:
-        for s in tied:
-            if s.get("bias") == "neutral":
-                return s["name"]
-
+        # Conservative tie-break: prefer consolidation when signals do not agree.
+        for scenario in tied:
+            if scenario.get("bias") == "neutral":
+                return scenario["name"]
     return best["name"]
