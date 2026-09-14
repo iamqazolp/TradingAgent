@@ -132,18 +132,13 @@ MULTI_HORIZON_PATHS = [
     "stats_52w.high_52w.pct_from_current", "stats_52w.low_52w.price",
     "stats_52w.low_52w.date", "stats_52w.return_pct", "stats_52w.max_drawdown_pct",
     "stats_52w.avg_daily_volume_mil", "stats_52w.avg_daily_value_bil",
-    # Part 5 — levels and scenarios
+    # Part 5 — levels and strategies
     "levels.basis_note", "levels.supports[].level", "levels.supports[].basis",
     "levels.supports[].confluence", "levels.supports[].distance_pct",
     "levels.resistances[].level", "levels.resistances[].confluence",
     "levels.position.description", "levels.close_extremes.20d.high",
     "levels.close_extremes.20d.high_date", "levels.close_extremes.20d.low",
     "levels.close_extremes.20d.low_date",
-    "scenarios.scenarios[].name", "scenarios.scenarios[].bias",
-    "scenarios.scenarios[].likelihood", "scenarios.scenarios[].likelihood_basis",
-    "scenarios.scenarios[].is_probability_estimate",
-    "scenarios.scenarios[].conditions", "scenarios.dominant_scenario",
-    "scenarios.likelihood_note",
     "strategies.technical_summary", "strategies.short_term.technical_state",
     "strategies.short_term.support_zone", "strategies.short_term.resistance_zone",
     "strategies.short_term.confirmation_signal", "strategies.short_term.risk_factors",
@@ -192,16 +187,16 @@ def test_skill_file_does_not_reference_removed_fields():
         "pivots.classic",        # synthetic-high/low pivots are gone
         "position_description",  # renamed under levels.position.description
         "rsi_14.latest`, `.zone` (vùng quá bán",  # stale phrasing from the old map
+        "scenarios.scenarios",   # scenario predictions dropped
     ):
         assert removed not in text, f"SKILL.md still references removed field: {removed}"
 
 
-def test_skill_file_forbids_rendering_likelihood_as_percent():
-    """The old instruction to print `probability` as X% must stay gone."""
+def test_skill_file_forbids_scenario_prediction():
+    """Scenario prediction and probability as X% must stay forbidden."""
     text = SKILL_PATH.read_text(encoding="utf-8")
     assert "Xác suất = X%" not in text
-    assert "likelihood" in text
-    assert "KHÔNG quy đổi thành %" in text or "KHÔNG đổi thành %" in text
+    assert "TUYỆT ĐỐI KHÔNG dự đoán" in text
 
 
 def test_skill_file_documents_every_scope_that_exists():

@@ -1,4 +1,4 @@
-"""Tests for multi-timeframe aggregation, multi-horizon analysis, scenarios, and strategies."""
+"""Tests for multi-timeframe aggregation, multi-horizon analysis, and strategies."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from indicators.horizon import (
     horizon_analysis,
     signal_strength,
 )
-from indicators.scenarios import generate_scenarios
 from indicators.strategies import suggest_strategies
 from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from data import ingest
@@ -113,26 +112,20 @@ def test_signal_strength():
     assert bear == "strong_bearish"
 
 
-# --------------------------------------------------------------------------- scenarios & strategies
+# --------------------------------------------------------------------------- strategies & levels
 
 
-def test_scenarios_and_strategies(sample_rows):
+def test_strategies_and_no_scenarios(sample_rows):
     res = multi_horizon_compute(sample_rows)
     assert res["analysis_type"] == "multi_horizon"
     assert "daily" in res
     assert "horizons" in res
-    assert "scenarios" in res
+    assert "scenarios" not in res
     assert "strategies" in res
+    assert "levels" in res
 
-    scenarios = res["scenarios"]["scenarios"]
-    assert len(scenarios) == 3
-    biases = [s["bias"] for s in scenarios]
-    assert "bullish" in biases
-    assert "neutral" in biases
-    assert "bearish" in biases
-
-    # Dominant scenario exists
-    assert res["scenarios"]["dominant_scenario"] in [s["name"] for s in scenarios]
+    # Important levels exist
+    assert res["levels"]["supports"] or res["levels"]["resistances"]
 
     # Strategies exist for all 3 horizons
     strat = res["strategies"]
@@ -159,8 +152,9 @@ def test_mcp_server_analyze_multi_horizon(sample_rows, monkeypatch):
     assert result["ticker"] == "TEST"
     assert "daily" in result
     assert "horizons" in result
-    assert "scenarios" in result
+    assert "scenarios" not in result
     assert "strategies" in result
+    assert "levels" in result
 
 
 def test_mcp_server_compute_weekly_indicators(sample_rows, monkeypatch):

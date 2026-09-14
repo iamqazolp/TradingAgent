@@ -109,7 +109,7 @@ def test_scopes_declare_what_they_skipped(rows):
             assert declared != present, (
                 f"{scope}: horizons.{name} declared_omitted={declared} present={present}"
             )
-        for section in ("weekly", "stats_52w", "scenarios", "strategies"):
+        for section in ("weekly", "stats_52w", "strategies"):
             declared = section in omitted
             present = section in result
             assert declared != present, (
@@ -141,11 +141,12 @@ def test_omitted_sections_never_appear_as_insufficient_data(rows):
             assert missing, f"{section} was declared omitted but is present"
 
 
-def test_single_horizon_scope_omits_scenarios_and_says_why(rows):
-    """Scenario likelihood counts agreeing horizons, so one horizon cannot support it."""
+def test_single_horizon_scope_omits_unrequested_horizons(rows):
+    """Single horizon scope focuses on one horizon and omits others."""
     result = multi_horizon_compute(rows, scope="short_term")
     assert "scenarios" not in result
-    assert "scenarios" in result["sections_omitted"]
+    assert "horizons.mid_term" in result["sections_omitted"]
+    assert "horizons.long_term" in result["sections_omitted"]
 
     alignment = result["horizons"]["alignment"]
     assert alignment["label"] == "single_horizon_scope"

@@ -43,11 +43,11 @@ _LABELS_VI = {
 
 def suggest_strategies(
     horizons: dict,
-    scenarios: dict,
-    latest_close: float,
-    daily_compute: dict,
+    latest_close: float | dict,
+    daily_compute: dict | float | None = None,
     levels: dict | None = None,
     which: tuple[str, ...] = ("short_term", "mid_term", "long_term"),
+    **kwargs: Any,
 ) -> dict:
     """Technical perspective and observation levels for each computed horizon.
 
@@ -55,19 +55,32 @@ def suggest_strategies(
     empty perspective for a horizon nobody asked for would read as a horizon
     with no data.
     """
-    if latest_close is None or latest_close <= 0:
+    # Support legacy signature (horizons, scenarios, latest_close, daily_compute, levels, which)
+    if isinstance(latest_close, dict):
+        actual_close = daily_compute
+        actual_levels = kwargs.get("levels", which if isinstance(which, dict) else None)
+        actual_which = kwargs.get("which", ("short_term", "mid_term", "long_term"))
+        close_val = actual_close
+        levels_val = actual_levels
+        which_val = actual_which
+    else:
+        close_val = latest_close
+        levels_val = levels
+        which_val = which
+
+    if close_val is None or close_val <= 0:
         return {"error": "invalid_close_price", "horizons": {}, "disclaimer": _DISCLAIMER}
 
     alignment = horizons.get("alignment") or {}
 
     out: dict[str, Any] = {}
-    for name in which:
+    for name in which_val:
         horizon = horizons.get(name)
         if not horizon:
             continue
-        out[name] = _perspective(horizon, latest_close, levels, _LABELS_VI.get(name, name))
+        out[name] = _perspective(horizon, close_val, levels_val, _LABELS_VI.get(name, name))
 
-    out["horizons_covered"] = [name for name in which if name in out]
+    out["horizons_covered"] = [name for name in which_val if name in out]
     out["horizon_alignment"] = horizons.get("horizon_alignment", alignment.get("label"))
     out["technical_summary"] = (
         alignment.get("summary") or "Chưa đủ dữ liệu để tổng hợp đồng thuận đa khung."

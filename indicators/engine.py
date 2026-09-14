@@ -32,7 +32,6 @@ from indicators.volume_flow import (
 from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from indicators.horizon import horizon_analysis
 from indicators.levels import key_levels
-from indicators.scenarios import generate_scenarios
 from indicators.strategies import suggest_strategies
 from indicators.stats_52w import stats_52w
 
@@ -341,19 +340,13 @@ _CORE_DAILY_GROUPS: tuple[str, ...] = ("trend", "momentum", "volatility")
 #: bars, 52-week statistics and two unused horizons — and pays to compute them.
 #: Each scope names exactly what it needs so the work and the payload both shrink.
 #:
-#: Scenarios are omitted from single-horizon scopes on purpose: their
-#: ``likelihood`` counts *agreeing horizons*, so "cao (1/1)" computed from one
-#: horizon would read as a three-horizon consensus. The horizon's own
-#: ``invalidation`` and the matching ``strategies`` entry carry the same levels
-#: without that implication.
 SCOPES: dict[str, dict[str, Any]] = {
     "full": {
-        "description_vi": "Phân tích toàn diện: cả ba khung, kịch bản, thống kê 52 tuần",
+        "description_vi": "Phân tích toàn diện: cả ba khung, mốc kỹ thuật, thống kê 52 tuần",
         "horizons": ("short_term", "mid_term", "long_term"),
         "daily_groups": GROUPS,
         "weekly": True,
         "stats_52w": True,
-        "scenarios": True,
         "strategies": True,
         "levels": True,
     },
@@ -363,7 +356,6 @@ SCOPES: dict[str, dict[str, Any]] = {
         "daily_groups": _CORE_DAILY_GROUPS + ("volume_flow", "trade_flow", "foreign_flow"),
         "weekly": False,
         "stats_52w": False,
-        "scenarios": False,
         "strategies": True,
         "levels": True,
     },
@@ -373,7 +365,6 @@ SCOPES: dict[str, dict[str, Any]] = {
         "daily_groups": _CORE_DAILY_GROUPS + ("volume_flow", "trade_flow", "foreign_flow"),
         "weekly": True,  # the mid-term view uses weekly SMA20 as confirmation
         "stats_52w": False,
-        "scenarios": False,
         "strategies": True,
         "levels": True,
     },
@@ -383,7 +374,6 @@ SCOPES: dict[str, dict[str, Any]] = {
         "daily_groups": _CORE_DAILY_GROUPS + ("foreign_flow",),
         "weekly": True,
         "stats_52w": True,
-        "scenarios": False,
         "strategies": True,
         "levels": True,
     },
@@ -393,7 +383,6 @@ SCOPES: dict[str, dict[str, Any]] = {
         "daily_groups": _CORE_DAILY_GROUPS,
         "weekly": False,
         "stats_52w": False,
-        "scenarios": False,
         "strategies": False,
         "levels": True,
     },
@@ -459,9 +448,8 @@ def multi_horizon_compute(
     2. Weekly bar aggregation and weekly indicators
     3. Support / resistance levels
     4. Horizon analysis (short / mid / long term)
-    5. Scenario generation
-    6. Technical perspectives per horizon
-    7. 52-week statistics
+    5. Technical perspectives per horizon
+    6. 52-week statistics
 
     Parameters
     ----------
@@ -485,7 +473,7 @@ def multi_horizon_compute(
     -------
     dict
         ``daily`` and ``levels`` always; ``weekly``, ``horizons``,
-        ``scenarios``, ``strategies`` and ``stats_52w`` when the scope includes
+        ``strategies`` and ``stats_52w`` when the scope includes
         them, plus ``scope``, ``scope_description`` and ``sections_omitted``.
     """
     plan = SCOPES.get(scope)
@@ -554,23 +542,15 @@ def multi_horizon_compute(
         result["weekly_bars_available"] = int(len(weekly_frame))
         result["weekly_bars_min_required"] = _MIN_WEEKLY_BARS
 
-    # 5. Scenarios: multi-horizon by construction, so only for multi-horizon scopes.
-    scenarios = None
-    if plan["scenarios"] and horizons:
-        scenarios = generate_scenarios(
-            daily_result, weekly_result, horizons, latest_close, levels,
-        )
-        result["scenarios"] = scenarios
-
-    # 6. Technical perspectives for the horizons that were computed
-    if plan["strategies"] and horizons:
+    # 5. Technical perspectives for the horizons that were computed
+    if plan.get("strategies") and horizons:
         result["strategies"] = suggest_strategies(
-            horizons, scenarios or {}, latest_close, daily_result, levels,
+            horizons, latest_close, daily_result, levels,
             which=plan["horizons"],
         )
 
-    # 7. 52-week statistics
-    if plan["stats_52w"]:
+    # 6. 52-week statistics
+    if plan.get("stats_52w"):
         result["stats_52w"] = stats_52w(frame, window=min(250, len(frame)))
 
     omitted = _omitted_sections(plan, daily_groups)
@@ -593,13 +573,11 @@ def _omitted_sections(plan: dict, daily_groups) -> list[str]:
     for name in ("short_term", "mid_term", "long_term"):
         if name not in plan["horizons"]:
             omitted.append(f"horizons.{name}")
-    if not plan["weekly"]:
+    if not plan.get("weekly"):
         omitted.append("weekly")
-    if not plan["stats_52w"]:
+    if not plan.get("stats_52w"):
         omitted.append("stats_52w")
-    if not plan["scenarios"]:
-        omitted.append("scenarios")
-    if not plan["strategies"]:
+    if not plan.get("strategies"):
         omitted.append("strategies")
     for group in GROUPS:
         if group not in daily_groups:
@@ -780,7 +758,7 @@ def prune_series(obj: Any) -> Any:
     """Prune verbose historical series arrays from analysis dicts to keep LLM context light.
 
     Removes dict keys ending in '_series', 'series', and 'normalized_series_100'.
-    Scalar summaries, levels, horizons and scenarios are preserved.
+    Scalar summaries, levels, horizons and strategies are preserved.
     """
     if isinstance(obj, dict):
         return {

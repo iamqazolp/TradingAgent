@@ -121,8 +121,9 @@ def test_compact_mode_keeps_every_field_the_skill_renders(long_rows):
         for field in required_per_horizon:
             assert field in horizon, f"compact dropped {name}.{field}"
 
-    for section in ("daily", "horizons", "scenarios", "strategies", "stats_52w", "levels"):
+    for section in ("daily", "horizons", "strategies", "stats_52w", "levels"):
         assert section in compact, f"compact dropped {section}"
+    assert "scenarios" not in compact
     assert compact["levels"]["supports"] is not None
     assert compact["daily"]["groups"]["momentum"]
 
@@ -256,47 +257,10 @@ def test_neutral_verdict_does_not_borrow_bullish_invalidation_wording():
     )
 
 
-# --------------------------------------------------------------------------- scenarios
+# --------------------------------------------------------------------------- no scenario predictions
 
 
-def test_scenarios_quote_only_measured_levels(long_rows):
-    """No scenario may quote a level that is not in the measured level set.
-
-    Targets and triggers used to fall back to close * 1.05 / 0.90 while still
-    labelling themselves "nearest resistance".
-    """
+def test_no_scenario_predictions(long_rows):
+    """The engine must not produce scenario predictions or target forecasts."""
     result = multi_horizon_compute(long_rows)
-    measured = {
-        entry["level"]
-        for entry in result["levels"]["supports"] + result["levels"]["resistances"]
-    }
-
-    for scenario in result["scenarios"]["scenarios"]:
-        for field in ("trigger", "invalidation"):
-            block = scenario.get(field) or {}
-            if block.get("level") is not None:
-                assert block["level"] in measured, (
-                    f"{scenario['name']}.{field} quotes unmeasured level {block['level']}"
-                )
-        zone = scenario.get("target_zone") or {}
-        for key in ("from", "to"):
-            if zone.get(key) is not None:
-                assert zone[key] in measured, (
-                    f"{scenario['name']}.target_zone.{key} quotes unmeasured level {zone[key]}"
-                )
-        band = scenario.get("range") or {}
-        for key in ("low", "high"):
-            if band.get(key) is not None:
-                assert band[key] in measured
-
-
-def test_scenario_likelihood_is_not_a_percentage(long_rows):
-    """The likelihood label must not be renderable as a percent."""
-    result = multi_horizon_compute(long_rows)
-    for scenario in result["scenarios"]["scenarios"]:
-        assert "probability" not in scenario
-        assert scenario["likelihood"] in ("cao", "trung bình", "thấp")
-        assert scenario["is_probability_estimate"] is False
-        assert scenario["likelihood_basis"]
-        assert isinstance(scenario["conditions"], list)
-    assert "KHÔNG phải xác suất" in result["scenarios"]["likelihood_note"]
+    assert "scenarios" not in result

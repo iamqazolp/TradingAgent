@@ -154,7 +154,7 @@ declares its own inputs:
 
 | `scope` | For | Payload vs `full` |
 |---|---|---|
-| `full` | phân tích toàn diện / đa khung — all three horizons, scenarios, 52-week stats | 100% (~14k tokens) |
+| `full` | phân tích toàn diện / đa khung — all three horizons, measured levels, 52-week stats | 100% (~14k tokens) |
 | `short_term` | ngắn hạn only. Skips weekly aggregation entirely | 43% |
 | `mid_term` | trung hạn only, with weekly SMA20 confirmation | 63% |
 | `long_term` | dài hạn only, plus 52-week stats | 57% |
@@ -162,9 +162,7 @@ declares its own inputs:
 
 Sections a scope skips are named in `sections_omitted`, with a note stating they
 were **not requested** rather than unavailable — otherwise a report would say
-"chưa đủ dữ liệu" about data that was never asked for. Scenarios are dropped from
-single-horizon scopes on purpose: their `likelihood` counts *agreeing horizons*,
-so "cao (1/1)" from one horizon would read as a three-horizon consensus.
+"chưa đủ dữ liệu" about data that was never asked for.
 
 **`detail` — drop fields duplicated elsewhere in the same response.**
 `"compact"` (the default) cuts `analyze_multi_horizon` from ~17k to ~14k tokens
@@ -283,7 +281,7 @@ indicators/      pure functions: trend, momentum, volatility, volume_flow,
                  trade_flow, value_flow, foreign_flow + engine.py (dispatch, quality, serialize)
                  interpretation: weekly.py (bar aggregation), levels.py (support/resistance),
                  horizon.py (three horizons, scored components, confidence),
-                 scenarios.py, strategies.py, stats_52w.py, comparison.py
+                 strategies.py, stats_52w.py, comparison.py
 mcp_server/      server.py (six tools, audit log), tool_schemas.py (pydantic validation)
 skills/          technical-analysis/SKILL.md — the reasoning framework
 scripts/         generate_fixtures, ground_truth, validate, mcp_smoke, install_skill,

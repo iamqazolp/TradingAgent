@@ -454,7 +454,7 @@ def get_flow_summary(
         "indicators and support/resistance levels measured from closes.\n"
         "SET `scope` TO MATCH THE QUESTION — a scoped call is far cheaper:\n"
         "  scope='full'       phân tích toàn diện / đa khung (all 3 horizons, "
-        "scenarios, 52-week stats)\n"
+        "measured levels, 52-week stats)\n"
         "  scope='short_term' ngắn hạn only (~43% of full)\n"
         "  scope='mid_term'   trung hạn only\n"
         "  scope='long_term'  dài hạn only\n"
