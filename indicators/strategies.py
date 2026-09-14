@@ -200,9 +200,6 @@ def _risks(horizon: dict, strength: str, support: dict | None, resistance: dict 
             f"Rủi ro dò đáy tiếp nếu không giữ được {support['level']:,.0f} VND ({support['basis']})"
         )
 
-    for conflict in horizon.get("conflicts", []):
-        out.append(f"Tín hiệu xung đột: {conflict['description']}")
-
     missing = horizon.get("groups_missing") or []
     if missing:
         out.append("Độ tin cậy bị giới hạn do thiếu dữ liệu: " + ", ".join(missing))
