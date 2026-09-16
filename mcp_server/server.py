@@ -663,18 +663,20 @@ def compute_weekly_indicators(
     return result
 
 
-@server.tool(
-    description=(
-        "Compare 2 to 5 Vietnamese stock tickers head-to-head. "
-        "Returns a 52-week performance table (return, close high/low with dates, "
-        "max drawdown, average volume/value), a moving-average position table "
-        "(vs SMA 20/50/100/200 and EMA 20/50/200, RSI, MACD normalized by price), "
-        "a support/resistance table measured from closes, and a relative strength "
-        "assessment covering EVERY compared ticker. Tickers with too little "
-        "history are listed in `tickers_excluded` rather than dropped. "
-        "Pure objective technical analysis, zero buy/sell advice."
-    )
-)
+# Mode 2 (compare_tickers) is temporarily disabled to focus exclusively on
+# single-ticker analysis (Modes 1 and 3).
+# @server.tool(
+#     description=(
+#         "Compare 2 to 5 Vietnamese stock tickers head-to-head. "
+#         "Returns a 52-week performance table (return, close high/low with dates, "
+#         "max drawdown, average volume/value), a moving-average position table "
+#         "(vs SMA 20/50/100/200 and EMA 20/50/200, RSI, MACD normalized by price), "
+#         "a support/resistance table measured from closes, and a relative strength "
+#         "assessment covering EVERY compared ticker. Tickers with too little "
+#         "history are listed in `tickers_excluded` rather than dropped. "
+#         "Pure objective technical analysis, zero buy/sell advice."
+#     )
+# )
 def compare_tickers(
     tickers: list[str] | str,
     lookback_days: int = 250,
