@@ -184,7 +184,7 @@ def detect_sma_crossover(close: pd.Series, fast: int, slow: int, dates: pd.Serie
 def trend_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
-    sma_windows = params.get("sma_windows", (20, 50, 100, 200))
+    sma_windows = params.get("sma_windows", (5, 10, 20, 50, 100, 200))
     ema_windows = params.get("ema_windows", (12, 20, 26, 50, 200))
     out: dict[str, dict] = {}
     latest_c = latest(close)
