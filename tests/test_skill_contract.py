@@ -143,11 +143,10 @@ MULTI_HORIZON_PATHS = [
     "strategies.short_term.support_zone", "strategies.short_term.resistance_zone",
     "strategies.short_term.confirmation_signal", "strategies.short_term.risk_factors",
     "strategies.mid_term.technical_state", "strategies.long_term.technical_state",
-    "strategies.disclaimer",
 ]
 
 COMPARISON_PATHS = [
-    "tickers_compared", "tickers_excluded", "levels_note", "disclaimer",
+    "tickers_compared", "tickers_excluded", "levels_note",
     "table_52w[].ticker", "table_52w[].return_pct", "table_52w[].high_52w",
     "table_52w[].high_date", "table_52w[].pct_from_high", "table_52w[].low_52w",
     "table_52w[].low_date", "table_52w[].pct_from_low", "table_52w[].max_drawdown_pct",
@@ -268,3 +267,14 @@ def test_skill_file_documents_the_tools_that_exist():
         "compute_weekly_indicators",
     ):
         assert tool in text, f"SKILL.md does not mention the {tool} tool"
+
+
+def test_skill_file_documents_context_reuse():
+    """SKILL.md must instruct the subagent to reuse prior results."""
+    text = SKILL_PATH.read_text(encoding="utf-8")
+    assert "TÁI SỬ DỤNG" in text
+    assert "trích xuất" in text.lower() or "Trích xuất" in text
+    assert 'scope="full"' in text
+    assert "❌ KHÔNG" in text
+    assert "✅ CÓ" in text
+

@@ -426,6 +426,8 @@ def compact_multi_horizon(result: dict) -> dict:
     levels = result.get("levels")
     if isinstance(levels, dict):
         levels.pop("swings", None)
+        levels.pop("nearest_support", None)
+        levels.pop("nearest_resistance", None)
 
     return result
 

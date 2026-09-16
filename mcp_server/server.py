@@ -38,6 +38,7 @@ from data import store
 from indicators.comparison import compare_multiple_tickers
 from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary, multi_horizon_compute
 from indicators.weekly import aggregate_weekly, weekly_quality_flags
+from mcp_server.cache import get_cache
 from mcp_server.tool_schemas import (
     AnalyzeMultiHorizonInput,
     CompareTickersInput,
@@ -497,6 +498,21 @@ def analyze_multi_horizon(
         audit("analyze_multi_horizon", arguments, error=str(error), started=started)
         raise error from exc
 
+    cache = get_cache()
+    cache_params = {
+        "ticker": params.ticker,
+        "lookback_days": params.lookback_days,
+        "scope": params.scope,
+        "series_tail": params.series_tail,
+        "weekly_series_tail": params.weekly_series_tail,
+        "detail": params.detail,
+        "as_of": params.as_of,
+    }
+    cached = cache.get("analyze_multi_horizon", **cache_params)
+    if cached is not None:
+        audit("analyze_multi_horizon", arguments, result=cached, started=started)
+        return cached
+
     conn = store.connect()
     try:
         if params.as_of:
@@ -559,6 +575,7 @@ def analyze_multi_horizon(
                 + ", không phải phiên gần nhất hiện tại."
             ),
         }
+    cache.put(result, "analyze_multi_horizon", **cache_params)
     audit("analyze_multi_horizon", arguments, result=result, started=started)
     return result
 
@@ -680,6 +697,17 @@ def compare_tickers(
         audit("compare_tickers", arguments, error=str(error), started=started)
         raise error from exc
 
+    cache = get_cache()
+    cache_params = {
+        "tickers": sorted(params.tickers),
+        "lookback_days": params.lookback_days,
+        "detail": params.detail,
+    }
+    cached = cache.get("compare_tickers", **cache_params)
+    if cached is not None:
+        audit("compare_tickers", arguments, result=cached, started=started)
+        return cached
+
     conn = store.connect()
     ticker_data = {}
     missing_tickers = []
@@ -715,6 +743,7 @@ def compare_tickers(
         audit("compare_tickers", arguments, error=str(exc), started=started)
         raise ToolError(str(exc)) from exc
 
+    cache.put(result, "compare_tickers", **cache_params)
     audit("compare_tickers", arguments, result=result, started=started)
     return result
 

@@ -22,7 +22,6 @@ def test_compare_multiple_tickers_basic():
     assert "table_levels" in res
     assert len(res["table_levels"]) == 2
     assert "relative_assessment" in res
-    assert "disclaimer" in res
 
 
 def test_compare_populates_rsi_for_every_ticker():

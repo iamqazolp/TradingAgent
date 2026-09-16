@@ -132,9 +132,6 @@ def test_strategies_and_no_scenarios(sample_rows):
     assert "short_term" in strat
     assert "mid_term" in strat
     assert "long_term" in strat
-    assert "vn_market_rules" in strat
-    assert strat["vn_market_rules"]["no_short_selling"] is True
-    assert "T+2.5" in strat["vn_market_rules"]["t_plus"]
 
 
 # --------------------------------------------------------------------------- mcp tool execution

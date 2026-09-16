@@ -207,7 +207,6 @@ def compare_multiple_tickers(
             "Mọi mốc hỗ trợ/kháng cự tính trên GIÁ ĐÓNG CỬA (feed không có high/low "
             "trong phiên) — không phải pivot theo đỉnh/đáy nến."
         ),
-        "disclaimer": _COMPARE_DISCLAIMER,
     }
     if not include_series:
         result = prune_series(result)

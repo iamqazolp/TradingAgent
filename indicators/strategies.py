@@ -69,7 +69,7 @@ def suggest_strategies(
         which_val = which
 
     if close_val is None or close_val <= 0:
-        return {"error": "invalid_close_price", "horizons": {}, "disclaimer": _DISCLAIMER}
+        return {"error": "invalid_close_price", "horizons": {}}
 
     alignment = horizons.get("alignment") or {}
 
@@ -86,8 +86,6 @@ def suggest_strategies(
         alignment.get("summary") or "Chưa đủ dữ liệu để tổng hợp đồng thuận đa khung."
     )
     out["shared_input_caveat"] = alignment.get("shared_input_caveat")
-    out["vn_market_rules"] = _VN_MARKET_RULES
-    out["disclaimer"] = _DISCLAIMER
     return out
 
 
@@ -145,9 +143,6 @@ def _perspective(
         "horizon": horizon.get("horizon"),
         "label_vi": horizon.get("label_vi"),
         "technical_state": state,
-        "signal_strength": strength,
-        "confidence": horizon.get("confidence"),
-        "confidence_reason": horizon.get("confidence_reason"),
         "support_zone": support or {"level": None, "unavailable_reason":
                                     "không có mức hỗ trợ nào tính được dưới giá hiện tại"},
         "resistance_zone": resistance or {"level": None, "unavailable_reason":
@@ -155,8 +150,6 @@ def _perspective(
         "levels_to_watch": ma_levels,
         "confirmation_signal": confirmation,
         "risk_factors": risks,
-        "invalidation": horizon.get("invalidation"),
-        "conflicts": horizon.get("conflicts", []),
     }
 
 

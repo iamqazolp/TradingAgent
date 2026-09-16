@@ -162,7 +162,6 @@ def test_strategies_cover_only_the_computed_horizons(rows):
     assert "short_term" not in strategies
     assert "long_term" not in strategies
     assert strategies["mid_term"]["technical_state"]
-    assert strategies["disclaimer"]
 
 
 # --------------------------------------------------------------------------- cost
