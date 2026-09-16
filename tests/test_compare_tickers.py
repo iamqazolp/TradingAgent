@@ -75,23 +75,3 @@ def test_compare_reports_excluded_tickers_instead_of_dropping_them():
     assert excluded["TINY"]["reason"] == "insufficient_history"
     assert excluded["TINY"]["rows_available"] == 3
 
-
-def test_mcp_server_compare_tickers(monkeypatch):
-    from data import store
-    from mcp_server.server import compare_tickers
-
-    rows_hpg = build_rows(ticker="HPG", count=50)
-    rows_vnm = build_rows(ticker="VNM", count=50)
-
-    monkeypatch.setattr(store, "list_tickers", lambda conn: ["HPG", "VNM"])
-    monkeypatch.setattr(
-        store,
-        "get_recent",
-        lambda conn, ticker, lookback: rows_hpg if ticker == "HPG" else rows_vnm,
-    )
-
-    result = compare_tickers(tickers=["HPG", "VNM"], lookback_days=40)
-    assert "table_52w" in result
-    assert "table_ma" in result
-    assert "table_levels" in result
-    assert len(result["table_52w"]) == 2

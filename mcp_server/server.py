@@ -9,7 +9,6 @@ Tools
 * ``get_flow_summary``          the cheap flow-only answer
 * ``analyze_multi_horizon``     scoped short / mid / long-term analysis
 * ``compute_weekly_indicators`` indicator groups on weekly bars
-* ``compare_tickers``           2-5 tickers head to head
 
 Tools that load rows server-side accept ``as_of`` to compute values as they
 stood on a past date, using only rows up to and including it.
@@ -35,13 +34,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 from data import store
-from indicators.comparison import compare_multiple_tickers
 from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary, multi_horizon_compute
 from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from mcp_server.cache import get_cache
 from mcp_server.tool_schemas import (
     AnalyzeMultiHorizonInput,
-    CompareTickersInput,
     ComputeIndicatorsInput,
     ComputeWeeklyInput,
     GetFlowSummaryInput,
@@ -660,93 +657,6 @@ def compute_weekly_indicators(
     result["ticker"] = resolved_ticker or _ticker_hint(request)
     result["groups_requested"] = list(request.groups)
     audit("compute_weekly_indicators", arguments, result=result, started=started)
-    return result
-
-
-# Mode 2 (compare_tickers) is temporarily disabled to focus exclusively on
-# single-ticker analysis (Modes 1 and 3).
-# @server.tool(
-#     description=(
-#         "Compare 2 to 5 Vietnamese stock tickers head-to-head. "
-#         "Returns a 52-week performance table (return, close high/low with dates, "
-#         "max drawdown, average volume/value), a moving-average position table "
-#         "(vs SMA 20/50/100/200 and EMA 20/50/200, RSI, MACD normalized by price), "
-#         "a support/resistance table measured from closes, and a relative strength "
-#         "assessment covering EVERY compared ticker. Tickers with too little "
-#         "history are listed in `tickers_excluded` rather than dropped. "
-#         "Pure objective technical analysis, zero buy/sell advice."
-#     )
-# )
-def compare_tickers(
-    tickers: list[str] | str,
-    lookback_days: int = 250,
-    detail: str = "compact",
-) -> dict:
-    started = time.perf_counter()
-    arguments = {
-        "tickers": tickers,
-        "lookback_days": lookback_days,
-        "detail": detail,
-    }
-    try:
-        params = CompareTickersInput(
-            tickers=tickers,
-            lookback_days=lookback_days,
-            detail=detail,
-        )
-    except ValidationError as exc:
-        error = _validation_error(exc)
-        audit("compare_tickers", arguments, error=str(error), started=started)
-        raise error from exc
-
-    cache = get_cache()
-    cache_params = {
-        "tickers": sorted(params.tickers),
-        "lookback_days": params.lookback_days,
-        "detail": params.detail,
-    }
-    cached = cache.get("compare_tickers", **cache_params)
-    if cached is not None:
-        audit("compare_tickers", arguments, result=cached, started=started)
-        return cached
-
-    conn = store.connect()
-    ticker_data = {}
-    missing_tickers = []
-    try:
-        available = store.list_tickers(conn)
-        for t in params.tickers:
-            if t not in available:
-                missing_tickers.append(t)
-            else:
-                rows = store.get_recent(conn, t, params.lookback_days)
-                ticker_data[t] = rows
-    finally:
-        conn.close()
-
-    if missing_tickers:
-        result = {
-            "error": "tickers_not_found",
-            "missing_tickers": missing_tickers,
-            "available_tickers": available,
-            "message": f"Tickers not found in store: {', '.join(missing_tickers)}",
-        }
-        audit("compare_tickers", arguments, result=result, started=started)
-        return result
-
-    try:
-        result = compare_multiple_tickers(
-            ticker_data,
-            window_days=params.lookback_days,
-            include_series=False,
-            detail=params.detail,
-        )
-    except EngineError as exc:
-        audit("compare_tickers", arguments, error=str(exc), started=started)
-        raise ToolError(str(exc)) from exc
-
-    cache.put(result, "compare_tickers", **cache_params)
-    audit("compare_tickers", arguments, result=result, started=started)
     return result
 
 

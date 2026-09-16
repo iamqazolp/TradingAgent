@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from indicators.comparison import compare_multiple_tickers
 from indicators.engine import multi_horizon_compute
 from tests.conftest import build_rows
 
@@ -33,16 +32,6 @@ def multi_horizon_payload():
         close=[30_000.0 + (i % 29) * 260 - (i % 11) * 110 for i in range(430)],
     )
     return multi_horizon_compute(rows, detail="compact")
-
-
-@pytest.fixture(scope="module")
-def comparison_payload():
-    data = {
-        "AAA": build_rows(ticker="AAA", close=[30_000.0 + (i % 19) * 190 for i in range(300)]),
-        "BBB": build_rows(ticker="BBB", close=[18_000.0 - (i % 13) * 95 for i in range(300)]),
-        "CCC": build_rows(ticker="CCC", close=[24_000.0 + (i % 7) * 140 for i in range(300)]),
-    }
-    return compare_multiple_tickers(data, window_days=250, detail="compact")
 
 
 # --------------------------------------------------------------------------- path walker
@@ -145,34 +134,9 @@ MULTI_HORIZON_PATHS = [
     "strategies.mid_term.technical_state", "strategies.long_term.technical_state",
 ]
 
-COMPARISON_PATHS = [
-    "tickers_compared", "tickers_excluded", "levels_note",
-    "table_52w[].ticker", "table_52w[].return_pct", "table_52w[].high_52w",
-    "table_52w[].high_date", "table_52w[].pct_from_high", "table_52w[].low_52w",
-    "table_52w[].low_date", "table_52w[].pct_from_low", "table_52w[].max_drawdown_pct",
-    "table_52w[].avg_volume_mil", "table_52w[].avg_value_bil",
-    "table_ma[].ticker", "table_ma[].vs_sma20_pct", "table_ma[].vs_sma50_pct",
-    "table_ma[].vs_sma100_pct", "table_ma[].vs_sma200_pct", "table_ma[].vs_ema20_pct",
-    "table_ma[].vs_ema50_pct", "table_ma[].vs_ema200_pct", "table_ma[].rsi",
-    "table_ma[].rsi_zone", "table_ma[].macd", "table_ma[].macd_signal",
-    "table_ma[].macd_hist", "table_ma[].macd_hist_pct_of_close",
-    "table_ma[].trend_alignment",
-    "table_levels[].ticker", "table_levels[].nearest_support",
-    "table_levels[].nearest_support_basis", "table_levels[].nearest_support_distance_pct",
-    "table_levels[].nearest_resistance", "table_levels[].nearest_resistance_basis",
-    "table_levels[].nearest_resistance_distance_pct", "table_levels[].position_desc",
-    "relative_assessment.observations[]", "relative_assessment.tickers_assessed",
-]
-
-
 @pytest.mark.parametrize("path", MULTI_HORIZON_PATHS)
 def test_multi_horizon_path_documented_in_skill_exists(multi_horizon_payload, path):
     resolve(multi_horizon_payload, path)
-
-
-@pytest.mark.parametrize("path", COMPARISON_PATHS)
-def test_comparison_path_documented_in_skill_exists(comparison_payload, path):
-    resolve(comparison_payload, path)
 
 
 # --------------------------------------------------------------------------- prose checks
