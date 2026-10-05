@@ -1,11 +1,8 @@
-"""SQLite store for daily trading statistics and market indices.
+"""SQLite store for daily trading statistics.
 
-Tables:
-- `daily_prices`, keyed on (ticker, date). Supports OHLCV.
-- `market_indices`, keyed on (exchange, date).
-
-Writes are upserts so re-ingesting the same day is idempotent. Reads return
-plain dicts in ascending date order.
+Single table, `daily_prices`, keyed on (ticker, date). Writes are upserts so
+re-ingesting the same day is idempotent. Reads return plain dicts in ascending
+date order, which is the shape the indicator engine expects.
 """
 
 from __future__ import annotations
@@ -23,9 +20,6 @@ COLUMNS: tuple[str, ...] = (
     "ticker",
     "date",
     "prev_close",
-    "open",
-    "high",
-    "low",
     "close",
     "total_trade",
     "total_value",
@@ -41,20 +35,6 @@ COLUMNS: tuple[str, ...] = (
     "foreign_room",
 )
 
-MARKET_INDEX_COLUMNS: tuple[str, ...] = (
-    "exchange",
-    "date",
-    "index_current",
-    "index_change",
-    "index_percent_change",
-    "total_trade",
-    "total_value",
-    "total_volume",
-    "advances",
-    "declines",
-    "unchanged",
-)
-
 _UPSERT_SQL = """
 INSERT INTO daily_prices ({cols})
 VALUES ({placeholders})
@@ -63,20 +43,6 @@ ON CONFLICT(ticker, date) DO UPDATE SET {updates}
     cols=", ".join(COLUMNS),
     placeholders=", ".join(f":{c}" for c in COLUMNS),
     updates=", ".join(f"{c}=excluded.{c}" for c in COLUMNS if c not in ("ticker", "date")),
-)
-
-_UPSERT_MARKET_INDICES_SQL = """
-INSERT INTO market_indices ({cols})
-VALUES ({placeholders})
-ON CONFLICT(exchange, date) DO UPDATE SET {updates}
-""".format(
-    cols=", ".join(MARKET_INDEX_COLUMNS),
-    placeholders=", ".join(f":{c}" for c in MARKET_INDEX_COLUMNS),
-    updates=", ".join(
-        f"{c}=excluded.{c}"
-        for c in MARKET_INDEX_COLUMNS
-        if c not in ("exchange", "date")
-    ),
 )
 
 
@@ -103,19 +69,14 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Apply schema.sql and migrate existing tables if needed. Idempotent."""
+    """Apply schema.sql. Idempotent."""
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    cursor = conn.execute("PRAGMA table_info(daily_prices)")
-    existing_cols = {row[1] for row in cursor.fetchall()}
-    for col in ("open", "high", "low"):
-        if col not in existing_cols:
-            conn.execute(f"ALTER TABLE daily_prices ADD COLUMN {col} REAL")
     conn.commit()
 
 
 def upsert_rows(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     """Insert or update rows. Returns the number of rows written."""
-    payload = [{c: row.get(c, None) for c in COLUMNS} for row in rows]
+    payload = [{c: row[c] for c in COLUMNS} for row in rows]
     if not payload:
         return 0
     conn.executemany(_UPSERT_SQL, payload)
@@ -143,7 +104,11 @@ def get_range(
 
 
 def get_recent(conn: sqlite3.Connection, ticker: str, lookback_days: int) -> list[dict]:
-    """The most recent `lookback_days` trading rows for `ticker`, oldest first."""
+    """The most recent `lookback_days` *trading rows* for `ticker`, oldest first.
+
+    Trading rows, not calendar days: a 300-row lookback is what indicator windows
+    actually consume, and it is stable across holidays and halts.
+    """
     if lookback_days <= 0:
         return []
     sql = (
@@ -181,59 +146,4 @@ def date_bounds(conn: sqlite3.Connection, ticker: str) -> tuple[str | None, str 
 
 def rows_to_columns(rows: Sequence[dict]) -> dict[str, list]:
     """Transpose row dicts into column lists. Convenience for callers building frames."""
-    return {c: [row.get(c, None) for row in rows] for c in COLUMNS}
-
-
-# --------------------------------------------------------------------------- market indices
-
-
-def upsert_market_indices(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
-    """Insert or update market indices. Returns the number of rows written."""
-    payload = [{c: row.get(c, None) for c in MARKET_INDEX_COLUMNS} for row in rows]
-    if not payload:
-        return 0
-    for item in payload:
-        if item.get("exchange") is not None:
-            item["exchange"] = str(item["exchange"]).upper()
-    conn.executemany(_UPSERT_MARKET_INDICES_SQL, payload)
-    conn.commit()
-    return len(payload)
-
-
-def get_latest_market_indices(
-    conn: sqlite3.Connection, exchange: str | None = None
-) -> list[dict]:
-    """Latest market index rows, either for all exchanges or a specific exchange."""
-    if exchange is not None:
-        sql = (
-            f"SELECT {', '.join(MARKET_INDEX_COLUMNS)} FROM market_indices "
-            "WHERE exchange = ? ORDER BY date DESC LIMIT 1"
-        )
-        return [dict(r) for r in conn.execute(sql, (exchange.upper(),))]
-
-    sql = (
-        f"SELECT {', '.join(MARKET_INDEX_COLUMNS)} FROM market_indices m "
-        "WHERE m.date = ("
-        "  SELECT MAX(m2.date) FROM market_indices m2 WHERE m2.exchange = m.exchange"
-        ") ORDER BY m.exchange ASC"
-    )
-    return [dict(r) for r in conn.execute(sql)]
-
-
-def get_market_indices_range(
-    conn: sqlite3.Connection,
-    exchange: str,
-    start: str | None = None,
-    end: str | None = None,
-) -> list[dict]:
-    """Market index rows for `exchange` between inclusive ISO dates `start` and `end`."""
-    sql = f"SELECT {', '.join(MARKET_INDEX_COLUMNS)} FROM market_indices WHERE exchange = ?"
-    params: list[object] = [exchange.upper()]
-    if start:
-        sql += " AND date >= ?"
-        params.append(start)
-    if end:
-        sql += " AND date <= ?"
-        params.append(end)
-    sql += " ORDER BY date ASC"
-    return [dict(r) for r in conn.execute(sql, params)]
+    return {c: [row[c] for row in rows] for c in COLUMNS}

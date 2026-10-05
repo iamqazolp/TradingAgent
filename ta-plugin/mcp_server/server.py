@@ -9,7 +9,6 @@ Tools
 * ``get_flow_summary``          the cheap flow-only answer
 * ``analyze_multi_horizon``     scoped short / mid / long-term analysis
 * ``compute_weekly_indicators`` indicator groups on weekly bars
-* ``get_market_breadth``         market breadth and advance/decline metrics
 
 Tools that load rows server-side accept ``as_of`` to compute values as they
 stood on a past date, using only rows up to and including it.
@@ -40,11 +39,9 @@ from indicators.weekly import aggregate_weekly, weekly_quality_flags
 from mcp_server.cache import get_cache
 from mcp_server.tool_schemas import (
     AnalyzeMultiHorizonInput,
-    CompareTickersInput,
     ComputeIndicatorsInput,
     ComputeWeeklyInput,
     GetFlowSummaryInput,
-    GetMarketBreadthInput,
     GetPriceDataInput,
     RowSource,
     rows_as_dicts,
@@ -229,7 +226,7 @@ def _as_of_meta(source: RowSource, rows: list[dict]) -> dict | None:
 @server.tool(
     description=(
         "Stored daily trading statistics for one ticker, oldest row first. "
-        "Feed contains close, open, high, low (when available), volume, value, orders, foreign flow. "
+        "Feed is CLOSE-ONLY (contains close, volume, value, orders, foreign flow; NO intraday high/low). "
         "lookback_days counts the most recent trading rows (e.g. lookback_days=10 for the last 10 sessions). "
         "IMPORTANT: When asked for 'recent', 'latest', or 'last N days/sessions', pass ONLY `ticker` and `lookback_days`. "
         "DO NOT guess or pass `start` or `end` dates unless the user explicitly specified calendar dates in their query."
@@ -660,87 +657,6 @@ def compute_weekly_indicators(
     result["ticker"] = resolved_ticker or _ticker_hint(request)
     result["groups_requested"] = list(request.groups)
     audit("compute_weekly_indicators", arguments, result=result, started=started)
-    return result
-
-
-@server.tool(
-    description=(
-        "Market breadth summary (advances, declines, unchanged, AD ratio, breadth regime) "
-        "for Vietnamese stock exchanges (VNINDEX, HNX, UPCOM, or ALL)."
-    )
-)
-def get_market_breadth(exchange: str = "VNINDEX") -> dict:
-    started = time.perf_counter()
-    arguments = {"exchange": exchange}
-    try:
-        params = GetMarketBreadthInput(exchange=exchange)
-    except ValidationError as exc:
-        error = _validation_error(exc)
-        audit("get_market_breadth", arguments, error=str(error), started=started)
-        raise error from exc
-
-    conn = store.connect()
-    try:
-        req_ex = None if params.exchange == "ALL" else params.exchange
-        rows = store.get_latest_market_indices(conn, req_ex)
-    finally:
-        conn.close()
-
-    from indicators.market_breadth import market_breadth_summary
-
-    if not rows and params.exchange != "ALL":
-        result = {
-            "exchange": params.exchange,
-            "exchanges": {},
-            "message": f"no stored market index data for {params.exchange}",
-        }
-        audit("get_market_breadth", arguments, result=result, started=started)
-        return result
-
-    result = market_breadth_summary(rows)
-    audit("get_market_breadth", arguments, result=result, started=started)
-    return result
-
-
-@server.tool(
-    description=(
-        "Head-to-head technical comparison of 2 to 5 stock tickers. "
-        "Produces comparative tables across 52-week performance/drawdowns, moving average alignments, "
-        "momentum indicators (RSI, MACD), support/resistance levels, and relative strength assessment."
-    )
-)
-def compare_tickers(
-    tickers: list[str] | str,
-    lookback_days: int = 250,
-    detail: str = "compact",
-) -> dict:
-    started = time.perf_counter()
-    arguments = {"tickers": tickers, "lookback_days": lookback_days, "detail": detail}
-    try:
-        params = CompareTickersInput(
-            tickers=tickers, lookback_days=lookback_days, detail=detail
-        )
-    except ValidationError as exc:
-        error = _validation_error(exc)
-        audit("compare_tickers", arguments, error=str(error), started=started)
-        raise error from exc
-
-    conn = store.connect()
-    try:
-        ticker_data: dict[str, list[dict]] = {}
-        for sym in params.tickers:
-            ticker_data[sym] = store.get_recent(conn, sym, lookback_days=params.lookback_days)
-    finally:
-        conn.close()
-
-    from indicators.comparison import compare_multiple_tickers
-
-    result = compare_multiple_tickers(
-        ticker_data=ticker_data,
-        window_days=params.lookback_days,
-        detail=params.detail,
-    )
-    audit("compare_tickers", arguments, result=result, started=started)
     return result
 
 

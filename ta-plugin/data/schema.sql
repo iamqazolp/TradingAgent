@@ -1,14 +1,11 @@
 -- Daily trading statistics, one row per ticker per trading day.
--- Mirrors the VietinBank and Stockbiz GetTradingStatistics responses; see data/ingest.py for the
+-- Mirrors the VietinBank GetTradingStatistics response; see data/ingest.py for the
 -- raw-field mapping. Derived quantities (net buy volume, average trade size,
 -- foreign net flow, ...) are computed on read in the indicator engine, not stored.
 CREATE TABLE IF NOT EXISTS daily_prices (
     ticker TEXT NOT NULL,
     date TEXT NOT NULL,
     prev_close REAL NOT NULL,
-    open REAL,
-    high REAL,
-    low REAL,
     close REAL NOT NULL,
     total_trade INTEGER NOT NULL,
     total_value REAL NOT NULL,
@@ -23,19 +20,4 @@ CREATE TABLE IF NOT EXISTS daily_prices (
     foreign_sell_value REAL NOT NULL,
     foreign_room INTEGER NOT NULL,
     PRIMARY KEY (ticker, date)
-);
-
-CREATE TABLE IF NOT EXISTS market_indices (
-    exchange TEXT NOT NULL,
-    date TEXT NOT NULL,
-    index_current REAL NOT NULL,
-    index_change REAL NOT NULL,
-    index_percent_change REAL NOT NULL,
-    total_trade INTEGER,
-    total_value REAL,
-    total_volume INTEGER,
-    advances INTEGER,
-    declines INTEGER,
-    unchanged INTEGER,
-    PRIMARY KEY (exchange, date)
 );

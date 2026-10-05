@@ -117,9 +117,6 @@ def rows_to_frame(rows: list[dict]) -> pd.DataFrame:
     for column in REQUIRED_COLUMNS:
         if column != "date":
             frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("float64")
-    for column in ("open", "high", "low"):
-        if column in frame.columns:
-            frame[column] = pd.to_numeric(frame[column], errors="coerce").astype("float64")
     return frame
 
 
@@ -147,12 +144,12 @@ def derived_frame(frame: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------- compute
 
 
-def _compute_frame(
+def _compute_core(
     frame: pd.DataFrame,
     groups: list[str] | tuple[str, ...],
     params: dict | None = None,
+    *,
     series_tail: int = 20,
-    **kwargs,
 ) -> dict:
     """Internal: compute indicator groups from a pre-built frame.
 
@@ -165,10 +162,6 @@ def _compute_frame(
     group_params = dict(params or {})
     if "dates" not in group_params:
         group_params["dates"] = pd.Series(frame.index, index=frame.index)
-
-    for col in ("high", "low", "open", "prev_close"):
-        if col in frame.columns and col not in group_params:
-            group_params[col] = frame[col]
 
     results: dict[str, Any] = {}
     for group in groups:
@@ -291,22 +284,6 @@ def _compute_frame(
     }
 
 
-_compute_core = _compute_frame
-
-
-def get_unsupported_metrics(has_high_low: bool = False, has_open: bool = False) -> dict[str, str]:
-    """Return a copy of UNSUPPORTED_METRICS filtered for available data."""
-    metrics = dict(UNSUPPORTED_METRICS)
-    if has_high_low:
-        metrics.pop("atr", None)
-        metrics.pop("stochastic", None)
-    if has_open:
-        metrics.pop("open_price", None)
-        metrics.pop("overnight_gap", None)
-        metrics.pop("candle_body_ratio", None)
-    return metrics
-
-
 def compute(
     rows: list[dict],
     groups: list[str] | tuple[str, ...] | None = None,
@@ -328,18 +305,7 @@ def compute(
         )
 
     frame = rows_to_frame(rows)
-    has_hl = (
-        "high" in frame.columns
-        and "low" in frame.columns
-        and bool(frame["high"].notna().any())
-        and bool(frame["low"].notna().any())
-    )
-    has_open = "open" in frame.columns and bool(frame["open"].notna().any())
-
-    result = _compute_frame(frame, requested, params, series_tail=series_tail)
-    if has_hl or has_open:
-        result["unsupported_metrics"] = get_unsupported_metrics(has_high_low=has_hl, has_open=has_open)
-    return result
+    return _compute_core(frame, requested, params, series_tail=series_tail)
 
 
 #: Keys duplicated across the multi-horizon payload. Each is available in full
@@ -781,14 +747,11 @@ def serialize(obj: Any, series_tail: int = 20) -> Any:
     return obj
 
 
-def unsupported(metric: str, has_high_low: bool = False) -> dict:
+def unsupported(metric: str) -> dict:
     """Structured refusal for a metric this feed cannot support."""
     key = metric.strip().lower().replace(" ", "_")
-    metrics = get_unsupported_metrics(has_high_low=has_high_low)
-    reason = metrics.get(key)
+    reason = UNSUPPORTED_METRICS.get(key)
     if reason is None:
-        if has_high_low and key in ("atr", "stochastic"):
-            return {"supported": True, "metric": key, "message": f"{key} is supported when OHLC data is available"}
         return insufficient(f"unknown metric {metric!r}", 0)
     return {"unsupported": True, "metric": key, "reason": reason}
 

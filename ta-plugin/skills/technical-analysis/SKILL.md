@@ -1,7 +1,7 @@
 ---
-name: trading_statistics
-description: Chuyên gia phân tích kỹ thuật, thống kê giao dịch vi mô (order flow, dòng tiền ngoại, room ngoại) và độ rộng thị trường cho chứng khoán Việt Nam qua công cụ MCP ta-agent. Hỗ trợ nguồn dữ liệu đầy đủ OHLCV (từ Stockbiz) và fallback giá đóng cửa, chỉ báo True ATR, Stochastic, mô hình nến, mốc hỗ trợ kháng cự và độ rộng sàn (VNINDEX, HNX, UPCOM) theo chuẩn 4 phần (Summary, Answer, Insights, Risks). Thuần túy phân tích khách quan, không tư vấn mua bán.
-argument-hint: <MÃ_CP hoặc TÊN_SÀN> [câu hỏi]
+name: trading-statistics
+description: Chuyên gia phân tích kỹ thuật và thống kê giao dịch cho cổ phiếu Việt Nam từ nguồn dữ liệu giá đóng cửa qua công cụ MCP ta-agent. Cung cấp dữ liệu giá, các đường trung bình, chỉ báo kỹ thuật, mốc hỗ trợ kháng cự và thống kê dòng tiền khớp lệnh theo chuẩn 4 phần (Summary, Answer, Insights, Rủi ro). Thuần túy phân tích khách quan, không tư vấn mua bán hay dự đoán tương lai.
+argument-hint: <MÃ_CP> [câu hỏi]
 ---
 
 # Kỹ Năng Thống Kê Giao Dịch & Phân Tích Kỹ Thuật (trading_statistics)
@@ -25,10 +25,7 @@ Hệ thống tính toán đã xử lý sẵn toàn bộ dữ liệu định lư�
 
 ## CHỌN PHẠM VI DỮ LIỆU THEO CÂU HỎI
 
-⚠️ **Phân định đối tượng phân tích:**
-1. **Độ rộng thị trường / Toàn sàn:** Nếu câu hỏi hỏi về thị trường chung, độ rộng thị trường, tương quan mã tăng/giảm, hoặc chế độ thị trường trên các sàn (VNINDEX/HOSE, HNX, UPCOM, hoặc tất cả các sàn) → Gọi ngay công cụ `get_market_breadth(exchange=...)`. Sang **Chế độ 4**. **Xong.**
-2. **So sánh đối đầu kỹ thuật (2 đến 5 mã cổ phiếu):** Nếu câu hỏi yêu cầu so sánh, đối chiếu sức mạnh kỹ thuật, xu hướng hoặc lựa chọn giữa 2 đến 5 mã cổ phiếu (ví dụ: *"So sánh VNM và HPG"*, *"Nên chọn HPG hay TNG xét về kỹ thuật?"*, *"So sánh tương quan SSI, VND và VCI"*) → Gọi ngay công cụ `compare_tickers(tickers=['VNM', 'HPG'])`. Sang **Chế độ 2**. **Xong.**
-3. **Cổ phiếu đơn lẻ:** Hệ thống phân tích **từng mã cổ phiếu đơn lẻ** (Chế độ 1 và Chế độ 3). Nếu câu hỏi chứa nhiều mã nhưng không yêu cầu so sánh đối đầu, chỉ phân tích mã đầu tiên được nhắc đến.
+⚠️ **Phạm vi phục vụ:** Hệ thống chỉ phân tích **từng mã cổ phiếu đơn lẻ** (Chế độ 1 và Chế độ 3). Nếu câu hỏi chứa nhiều mã, chỉ phân tích mã đầu tiên được nhắc đến.
 
 Công cụ `analyze_multi_horizon` có tham số phạm vi `scope`. **Luôn chọn phạm vi hẹp nhất trả lời được câu hỏi** — phạm vi quá rộng làm tràn ngữ cảnh và loãng nội dung.
 
@@ -49,24 +46,20 @@ Chú ý: từ "phân tích" xuất hiện trong hầu hết câu hỏi nên **KH
 
 **Bước 2 —** Câu hỏi chỉ hỏi về vùng giá ("hỗ trợ", "kháng cự", "vùng giá", "mốc kỹ thuật", "ngưỡng cản") và không hỏi xu hướng → `scope='levels'`. **Xong.**
 
-**Bước 3 —** Câu hỏi chỉ hỏi **một số liệu cụ thể** (RSI, MACD, Stochastic, nến, giá, khối ngoại…) → KHÔNG gọi `analyze_multi_horizon`. Sang **Chế độ 3**. **Xong.**
+**Bước 3 —** Câu hỏi chỉ hỏi **một số liệu cụ thể** (RSI, MACD, giá, khối ngoại…) → KHÔNG gọi `analyze_multi_horizon`. Sang **Chế độ 3**. **Xong.**
 
 **Bước 4 —** Còn lại (ví dụ "phân tích VNM", "phân tích toàn diện vnm", "đánh giá kỹ thuật TNG") → `scope='full'`.
 
 **Ví dụ đối chiếu:**
 
-| Câu hỏi | Đối tượng / Khung | Kết quả |
+| Câu hỏi | Đếm khung | Kết quả |
 |---|---|---|
-| "so sánh sức mạnh kỹ thuật VNM và HPG" | So sánh đối đầu (2 mã) | `compare_tickers(tickers=['VNM', 'HPG'])` |
-| "nên chọn HPG hay TNG xét về kỹ thuật" | So sánh đối đầu (2 mã) | `compare_tickers(tickers=['HPG', 'TNG'])` |
-| "độ rộng thị trường sàn VNINDEX hôm nay" | Thị trường chung | `get_market_breadth(exchange='VNINDEX')` |
-| "độ rộng thị trường cả 3 sàn thế nào" | Toàn thị trường | `get_market_breadth(exchange='ALL')` |
-| "phân tích vnm trong ngắn hạn" | 1 (ngắn hạn) | `analyze_multi_horizon(..., scope='short_term')` |
-| "phân tích toàn diện vnm" | 0 → Bước 4 | `analyze_multi_horizon(..., scope='full')` |
-| "vnm ngắn hạn và dài hạn thế nào" | 2 | `analyze_multi_horizon(..., scope='full')` |
-| "xu hướng dài hạn của HPG" | 1 (dài hạn) | `analyze_multi_horizon(..., scope='long_term')` |
-| "hỗ trợ kháng cự vnm ở đâu" | 0 → Bước 2 | `analyze_multi_horizon(..., scope='levels')` |
-| "rsi hoặc stochastic của vnm là bao nhiêu" | 0 → Bước 3 | Chế độ 3 |
+| "phân tích vnm trong ngắn hạn" | 1 (ngắn hạn) | `scope='short_term'` |
+| "phân tích toàn diện vnm" | 0 → Bước 4 | `scope='full'` |
+| "vnm ngắn hạn và dài hạn thế nào" | 2 | `scope='full'` |
+| "xu hướng dài hạn của HPG" | 1 (dài hạn) | `scope='long_term'` |
+| "hỗ trợ kháng cự vnm ở đâu" | 0 → Bước 2 | `scope='levels'` |
+| "rsi của vnm là bao nhiêu" | 0 → Bước 3 | Chế độ 3 |
 
 ---
 
@@ -127,10 +120,11 @@ Mọi nhận định về xu hướng hay sức mạnh giá đều phải đi k�
 - Giá cổ phiếu: nghìn đồng/cổ phiếu hoặc VND (ví dụ: `59.6 nghìn đồng/cổ phiếu` hoặc `59.600 VND`). Khoảng cách: `+/−X,XX%`.
 - Giá trị giao dịch: **tỷ VND**. Khối lượng: **triệu cổ phiếu**. Khối lượng lệnh: **lô** (1 lô = 100 cổ phiếu).
 
-### R5. RANH GIỚI DỮ LIỆU VÀ CÁC CHỈ BÁO OHLCV
-Hệ thống hỗ trợ cả nguồn cấp dữ liệu đầy đủ OHLCV (từ Stockbiz) và nguồn cấp chỉ có giá đóng cửa (close-only):
-- **Khi có đầy đủ Open, High, Low**: Sử dụng trực tiếp **True ATR** để đo lường biến động và tính khoảng dừng lỗ kỹ thuật (`suggested_stop_distance_pct`); hỗ trợ chỉ báo **Stochastic Oscillator** (%K, %D) và phân tích **mô hình nến / khoảng trống giá (Overnight Gap)**. Hỗ trợ tra cứu độ rộng thị trường qua công cụ `get_market_breadth`.
-- **Khi chỉ có giá đóng cửa**: Tiếp tục duy trì fallback an toàn: dùng biến động giá đóng cửa `close_to_close_vol` thay thế cho ATR (ghi rõ "biến động close-to-close thay thế ATR"); các chỉ báo ADX, Stochastic, nến Nhật, VWAP thực tế sẽ từ chối với lý do thiếu dữ liệu tương ứng.
+### R5. RANH GIỚI DỮ LIỆU GIÁ ĐÓNG CỬA
+Nguồn cấp dữ liệu chỉ có giá đóng cửa (`close`) và giá đóng cửa phiên trước (`prev_close`), KHÔNG có giá mở cửa, giá cao nhất, giá thấp nhất trong phiên.
+- Mọi mức đỉnh, đáy hoặc hỗ trợ, kháng cự đều được tính toán trên **giá đóng cửa**.
+- CÁC CHỈ BÁO KHÔNG KHẢ DỤNG: **ATR** (dùng biến động giá đóng cửa `close_to_close_vol` thay thế, luôn ghi rõ "biến động close-to-close, thay thế ATR"), **ADX / Stochastic / Ichimoku** (cần giá cao nhất và thấp nhất), **khoảng trống giá qua đêm hay mô hình nến** (cần giá mở cửa), **VWAP thực tế** (cần dữ liệu từng lệnh khớp).
+- Khi được hỏi các chỉ báo trên: giải thích rõ không khả dụng do nguồn dữ liệu chỉ có giá đóng cửa, và nêu chỉ báo thay thế nếu có.
 
 ### R6. ĐIỀU KIỆN PHỦ ĐỊNH XU HƯỚNG
 - Mức độ tin cậy: sử dụng mức tin cậy (cao, trung bình, thấp) và giải thích bằng lý do từ công cụ.
@@ -165,9 +159,8 @@ Phân tích kỹ thuật cổ phiếu [MÃ] ([Tên công ty]) trong ba khung th�
 
 1. Khung ngắn hạn (ngày đến vài tuần):
 - Giá hiện tại: [giá] nghìn đồng/cổ phiếu ([mức tăng giảm]%).
-- Hình thái nến & biến động phiên (khi có OHLC): Mẫu hình nến [doji / hammer / marubozu / nến tiêu chuẩn] với biên độ dao động trong ngày [giá thấp] – [giá cao] nghìn đồng/cổ phiếu; khoảng dừng lỗ tham chiếu đo lường qua True ATR là [giá trị] nghìn đồng/cổ phiếu ([tỷ lệ]%).
 - Đường trung bình ngắn hạn: SMA5 ([giá]) thấp hơn hoặc cao hơn SMA10 ([giá]) và SMA20 ([giá]), cho thấy xu hướng giá ngắn hạn đang [giảm nhẹ / tích lũy / hồi phục].
-- Chỉ báo động lượng: RSI ở mức [giá trị], thuộc [vùng trung tính / quá mua / quá bán]; Stochastic %K ([giá trị]) và %D ([giá trị]) phản ánh [trạng thái dao động ngắn hạn].
+- Chỉ báo RSI ở mức [giá trị], thuộc [vùng trung tính / quá mua / quá bán / nghiêng về giảm].
 - Chỉ báo MACD [âm hoặc dương] ([giá trị]) nằm dưới hoặc trên đường tín hiệu ([giá trị]), histogram ([giá trị]) xác nhận áp lực [bán hoặc mua] trong ngắn hạn.
 - Giá đóng cửa nằm giữa hoặc sát dải Bollinger Band giữa [biên dưới] - [biên trên], [tín hiệu biên độ biến động].
 - Các mức hỗ trợ quan trọng quanh [mức giá]; kháng cự quanh [mức giá].
@@ -265,50 +258,16 @@ Báo cáo tập trung trực tiếp vào các mốc kỹ thuật:
 
 ---
 
-### Chế độ 2 — So sánh Đối đầu Kỹ thuật (2 đến 5 mã cổ phiếu)
-*Khi nhận yêu cầu so sánh đối đầu giữa các mã: "So sánh VNM và HPG", "Nên chọn HPG hay TNG xét về mặt kỹ thuật?", "So sánh tương quan sức mạnh SSI, VND, VCI".*
-
-**Gọi:** `compare_tickers(tickers=["VNM", "HPG"], lookback_days=250, detail="compact")`
-
-Áp dụng quy tắc **chắt lọc cốt lõi**, **ngôn ngữ tự nhiên** và **chuẩn hóa 4 phần đầu ra** (`Summary`, `Comparison Matrix`, `Insights`, `Risks`):
-
-1. **Summary:** 1-2 câu trực diện đúc kết tương quan sức mạnh giá, cấu trúc xu hướng và dòng tiền giữa các mã: mã nào đang chiếm ưu thế vượt trội hoặc giữ được nền giá tốt hơn dựa trên `relative_assessment`.
-2. **Comparison Matrix:** Lập bảng so sánh các chỉ số then chốt (Hiệu suất 52 tuần, Sụt giảm cực đại Max Drawdown, Khoảng cách tới SMA200, Vị thế SMA20/50, RSI, MACD Histogram, Thanh khoản bình quân tỷ VND/phiên). Kèm đoạn diễn giải tự nhiên từ `relative_assessment`.
-3. **Insights:** Vị thế mốc hỗ trợ và kháng cự gần nhất của từng mã; so sánh quy mô thanh khoản hấp thụ lệnh giữa các mã.
-4. **Risks:** Nêu rõ mốc giá phủ định xu hướng cho từng mã cổ phiếu được so sánh. Cấm đưa ra lời khuyên mua bán chủ quan (tuân thủ R1).
-5. **Gợi mở tiếp theo:** Đề xuất đào sâu phân tích chi tiết mã nào tiếp theo.
-
----
-
 ### Chế độ 3 — Tra cứu một số liệu
-*Khi chỉ hỏi một con số: "RSI của CTG bao nhiêu?", "Stochastic của HPG thế nào?", "khối ngoại gom bao nhiêu tỷ 20 phiên qua?".*
+*Khi chỉ hỏi một con số: "RSI của CTG bao nhiêu?", "khối ngoại gom bao nhiêu tỷ 20 phiên qua?".*
 
 Chọn công cụ gọn nhẹ nhất:
-- Giá, nến hoặc các phiên gần đây → `get_price_data(ticker=..., lookback_days=N)`. Feed trả về gồm `open`, `high`, `low`, `close` (khi có nguồn cấp) cùng khối lượng. **Chỉ truyền `ticker` và `lookback_days`; TUYỆT ĐỐI KHÔNG bịa `start`/`end`** trừ khi người hỏi nêu ngày cụ thể. Nếu kết quả không có dữ liệu khoảng ngày yêu cầu, nêu rõ công cụ đã lấy các phiên gần nhất thay thế.
+- Giá hoặc các phiên gần đây → `get_price_data(ticker=..., lookback_days=N)`. **Chỉ truyền `ticker` và `lookback_days`; TUYỆT ĐỐI KHÔNG bịa `start`/`end`** trừ khi người hỏi nêu ngày cụ thể. Nếu kết quả không có dữ liệu khoảng ngày yêu cầu, nêu rõ công cụ đã lấy các phiên gần nhất thay thế.
 - Dòng tiền & khối ngoại → `get_flow_summary(ticker=...)`.
-- Một nhóm chỉ báo → `compute_indicators(ticker=..., groups=[...], series_tail=0)`. Hỗ trợ các nhóm: `trend` (gồm SMA, EMA, MACD, mẫu hình nến), `momentum` (gồm RSI, Stochastic %K/%D), `volatility` (gồm Bollinger Bands, True ATR hoặc fallback log volatility), và các nhóm flow.
+- Một nhóm chỉ báo → `compute_indicators(ticker=..., groups=[...], series_tail=0)`.
 - Riêng khung tuần → `compute_weekly_indicators(ticker=..., series_tail=26)`.
-- Độ rộng thị trường toàn sàn → Sang **Chế độ 4**.
 
 Trả lời 1–3 câu bằng ngôn ngữ tự nhiên: con số, ngày ghi nhận, ý nghĩa kỹ thuật ngắn gọn. Không dựng báo cáo đầy đủ.
-
----
-
-### Chế độ 4 — Phân tích Độ rộng Thị trường (Market Breadth)
-*Khi nhận yêu cầu về thị trường chung: "Độ rộng thị trường sàn VNINDEX hôm nay ra sao?", "Tương quan mã tăng/giảm thế nào?", "Chế độ thị trường trên các sàn hiện tại".*
-
-**Gọi:** `get_market_breadth(exchange="VNINDEX" | "HNX" | "UPCOM" | "ALL")`
-
-Báo cáo mạch lạc và trực diện (1-2 đoạn văn ngắn):
-1. **Chỉ số & Điểm số:** Điểm số Index, mức thay đổi điểm và phần trăm phiên gần nhất.
-2. **Tương quan Mã Tăng / Giảm:** Số lượng mã tăng (`advances`), mã giảm (`declines`), đứng giá (`unchanged`), và tỷ lệ $AD\_Ratio = Advances / Declines$.
-3. **Chế độ Thị trường (Market Regime):** Đọc trực tiếp từ trường `market_regime`:
-   - `strongly_bullish` ($AD \ge 2.0$): Độ rộng thị trường bùng nổ, phe mua áp đảo toàn diện.
-   - `bullish` ($AD \ge 1.2$): Phe tăng điểm chiếm ưu thế, dòng tiền lan tỏa tích cực.
-   - `neutral` ($0.8 \le AD < 1.2$): Trạng thái cân bằng, thị trường phân hóa.
-   - `bearish` ($0.5 \le AD < 0.8$): Phe bán chiếm ưu thế, thị trường chịu áp lực điều chỉnh.
-   - `strongly_bearish` ($AD < 0.5$): Độ rộng suy yếu mạnh, áp lực bán bao trùm toàn sàn.
-4. **Thanh khoản Toàn sàn:** Tổng số lượng lệnh (`total_trade`), khối lượng (`total_volume` triệu cổ phiếu), và tổng giá trị giao dịch (`total_value` quy đổi ra tỷ VND hoặc nghìn tỷ VND).
 
 #### ⚠️ Hỏi chỉ báo TẠI MỘT NGÀY CỤ THỂ trong quá khứ → BẮT BUỘC dùng `as_of`
 

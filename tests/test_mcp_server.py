@@ -77,9 +77,11 @@ def test_the_server_exposes_expected_tools():
     tools = asyncio.run(server.list_tools())
     assert sorted(t.name for t in tools) == [
         "analyze_multi_horizon",
+        "compare_tickers",
         "compute_indicators",
         "compute_weekly_indicators",
         "get_flow_summary",
+        "get_market_breadth",
         "get_price_data",
     ]
     for tool in tools:
@@ -314,3 +316,43 @@ def test_an_unwritable_audit_log_does_not_break_a_working_call(monkeypatch):
     # their answer.
     monkeypatch.setenv("TA_AGENT_AUDIT_LOG", "/proc/nope/tool_calls.jsonl")
     assert call("get_price_data", {"ticker": TICKER, "lookback_days": 2})["row_count"] == 2
+
+
+def test_compare_tickers_tool(isolated_env):
+    conn = store.connect(isolated_env / "ta.sqlite")
+    try:
+        rows_other = build_rows(
+            ticker="OTH",
+            close=[20_000.0 - 50 * i for i in range(40)],
+            total_volume=[2_000] * 40,
+        )
+        store.upsert_rows(conn, rows_other)
+    finally:
+        conn.close()
+
+    payload = call("compare_tickers", {"tickers": [TICKER, "OTH"], "lookback_days": 30})
+    assert payload["tickers_compared"] == [TICKER, "OTH"]
+    assert "table_52w" in payload
+    assert len(payload["table_52w"]) == 2
+    assert "table_ma" in payload
+    assert len(payload["table_ma"]) == 2
+    assert "table_levels" in payload
+    assert len(payload["table_levels"]) == 2
+    assert "relative_assessment" in payload
+    assert payload["relative_assessment"]["tickers_assessed"] == [TICKER, "OTH"]
+
+    # Verify audit entry
+    entries = audit_entries(isolated_env)
+    assert entries[-1]["tool"] == "compare_tickers"
+    assert entries[-1]["result"]["tickers_compared"] == [TICKER, "OTH"]
+
+
+def test_compare_tickers_validation():
+    with pytest.raises(ToolError, match="at least 2 tickers"):
+        asyncio.run(server.call_tool("compare_tickers", {"tickers": [TICKER]}))
+
+    with pytest.raises(ToolError, match="maximum of 5 tickers"):
+        asyncio.run(
+            server.call_tool("compare_tickers", {"tickers": ["A", "B", "C", "D", "E", "F"]})
+        )
+

@@ -224,6 +224,7 @@ def test_skill_file_documents_the_tools_that_exist():
     text = SKILL_PATH.read_text(encoding="utf-8")
     for tool in (
         "analyze_multi_horizon",
+        "compare_tickers",
         "get_price_data",
         "get_flow_summary",
         "compute_indicators",

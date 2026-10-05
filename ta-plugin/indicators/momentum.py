@@ -203,89 +203,6 @@ def close_percentile_by_window(close: pd.Series, windows=(20, 60, 126)) -> dict:
     return out
 
 
-def stochastic(
-    high: pd.Series,
-    low: pd.Series,
-    close: pd.Series,
-    k_window: int = 14,
-    d_window: int = 3,
-) -> dict:
-    """Stochastic Oscillator (%K, %D).
-
-    %K = (Close - LowestLow(k)) / (HighestHigh(k) - LowestLow(k)) * 100
-    %D = SMA(%K, d)
-    """
-    required = k_window + d_window - 1
-    marker = require(close, required, f"stochastic({k_window},{d_window})")
-    if marker:
-        return marker
-
-    h = pd.to_numeric(high, errors="coerce").astype("float64")
-    l = pd.to_numeric(low, errors="coerce").astype("float64")
-    c = pd.to_numeric(close, errors="coerce").astype("float64")
-
-    if h.dropna().empty or l.dropna().empty:
-        return insufficient(
-            f"stochastic({k_window},{d_window}) requires valid high and low prices",
-            required,
-            int(len(close)),
-        )
-
-    lowest_low = l.rolling(k_window).min()
-    highest_high = h.rolling(k_window).max()
-    rng = highest_high - lowest_low
-
-    # When rng == 0 (flat window), %K is 50.0
-    pct_k = ((c - lowest_low) / rng.where(rng != 0, np.nan)) * 100.0
-    pct_k = pct_k.fillna(50.0).where(lowest_low.notna() & highest_high.notna(), np.nan)
-    pct_k.name = f"stochastic_k_{k_window}"
-
-    pct_d = pct_k.rolling(d_window).mean()
-    pct_d.name = f"stochastic_d_{d_window}"
-
-    k_now = latest(pct_k)
-    d_now = latest(pct_d)
-
-    if k_now is None or d_now is None:
-        return insufficient(
-            f"stochastic({k_window},{d_window}) has no value on the latest row",
-            required,
-            int(len(close)),
-        )
-
-    if k_now > 80:
-        condition = "overbought"
-    elif k_now < 20:
-        condition = "oversold"
-    else:
-        condition = "neutral"
-
-    crossover = None
-    if len(pct_k) >= 2 and len(pct_d) >= 2:
-        k_prev = finite(pct_k.iloc[-2])
-        d_prev = finite(pct_d.iloc[-2])
-        if k_prev is not None and d_prev is not None:
-            if k_prev <= d_prev and k_now > d_now:
-                crossover = "bullish_crossover"
-            elif k_prev >= d_prev and k_now < d_now:
-                crossover = "bearish_crossover"
-
-    return {
-        "k_window": k_window,
-        "d_window": d_window,
-        "latest": {
-            "k": round(k_now, 2),
-            "d": round(d_now, 2),
-        },
-        "k": round(k_now, 2),
-        "d": round(d_now, 2),
-        "condition": condition,
-        "crossover": crossover,
-        "k_series": pct_k,
-        "d_series": pct_d,
-    }
-
-
 def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group B indicator, keyed by name."""
     params = params or {}
@@ -294,8 +211,7 @@ def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
     pct_window = params.get("percentile_window", 20)
     pct_windows = params.get("percentile_windows", (20, 60, 126))
     by_window = close_percentile_by_window(close, pct_windows)
-
-    out = {
+    return {
         f"rsi_{n}": rsi(close, n),
         f"z_score_{z_window}": z_score(close, z_window),
         f"close_percentile_{pct_window}": close_percentile(close, pct_window),
@@ -303,19 +219,5 @@ def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
         "close_percentiles": by_window,
         "return_streak": return_streak(close),
     }
-
-    high = params.get("high")
-    low = params.get("low")
-    if isinstance(high, pd.Series) and isinstance(low, pd.Series):
-        h_num = pd.to_numeric(high, errors="coerce")
-        l_num = pd.to_numeric(low, errors="coerce")
-        if h_num.notna().any() and l_num.notna().any():
-            k_win = params.get("stochastic_k_window", 14)
-            d_win = params.get("stochastic_d_window", 3)
-            stoch_res = stochastic(high, low, close, k_window=k_win, d_window=d_win)
-            out["stochastic"] = stoch_res
-            out[f"stochastic_{k_win}_{d_win}"] = stoch_res
-
-    return out
 
 

@@ -35,9 +35,6 @@ class PriceRow(BaseModel):
 
     date: IsoDate
     prev_close: float = Field(gt=0, description="previous close, VND")
-    open: float | None = Field(default=None, description="open price, VND")
-    high: float | None = Field(default=None, description="high price, VND")
-    low: float | None = Field(default=None, description="low price, VND")
     close: float = Field(gt=0, description="close, VND")
     total_trade: int = Field(ge=0, description="matched trade count")
     total_value: float = Field(ge=0, description="total traded value, VND")
@@ -426,22 +423,6 @@ class CompareTickersInput(BaseModel):
         if len(self.tickers) > 5:
             raise ValueError("compare_tickers supports a maximum of 5 tickers")
         return self
-
-
-class GetMarketBreadthInput(BaseModel):
-    """Input for `get_market_breadth`."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    exchange: str = Field(
-        default="VNINDEX",
-        description="Exchange or index symbol (e.g. 'VNINDEX', 'HNX', 'UPCOM', or 'ALL' for all markets).",
-    )
-
-    @field_validator("exchange")
-    @classmethod
-    def _upper(cls, value: str) -> str:
-        return value.strip().upper()
 
 
 def rows_as_dicts(rows: list[PriceRow]) -> list[dict]:

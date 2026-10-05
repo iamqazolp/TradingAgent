@@ -1,6 +1,6 @@
-"""Ingestion for the VietinBank and Stockbiz trading statistics feeds.
+"""Ingestion for the VietinBank `GetTradingStatistics` feed.
 
-Every numeric field in the raw response arrives as a string, sometimes with
+Every numeric field in the raw response arrives as a *string*, sometimes with
 thousands separators, sometimes blank. Nothing here relies on JSON number
 parsing: each field is cast explicitly, and anything that cannot be cast is
 either a rejection (for prices) or a logged warning (for reconciliation).
@@ -11,8 +11,6 @@ Rejection policy
   substitute for a close price.
 * Missing / unparseable ``PricePreviousClose`` -> row rejected. ``0`` is not a
   valid price and would silently poison OBV and every return-based metric.
-* Missing / blank open, high, low fields -> cast to ``None``. Supported for
-  backward compatibility with close-only data.
 * Missing / blank volume, count, value or foreign-room field -> cast to ``0``.
   In this feed a blank there means "nothing traded on that side", which is
   ordinary behaviour for small caps, not a data error.
@@ -38,7 +36,6 @@ from pathlib import Path
 from typing import Any
 
 from data import store
-from data.stockbiz import StockbizClient
 
 logger = logging.getLogger(__name__)
 
@@ -47,12 +44,6 @@ FIELD_MAP: dict[str, tuple[str, str]] = {
     "Symbol": ("ticker", "ticker"),
     "Date": ("date", "date"),
     "PricePreviousClose": ("prev_close", "price"),
-    "PriceOpen": ("open", "price_optional"),
-    "Open": ("open", "price_optional"),
-    "PriceHigh": ("high", "price_optional"),
-    "High": ("high", "price_optional"),
-    "PriceLow": ("low", "price_optional"),
-    "Low": ("low", "price_optional"),
     "PriceClose": ("close", "price"),
     "TotalTrade": ("total_trade", "int"),
     "TotalValue": ("total_value", "float"),
@@ -149,19 +140,8 @@ def cast_price(value: Any, field_name: str) -> float:
     return price
 
 
-def cast_price_optional(value: Any, field_name: str) -> float | None:
-    """Cast an optional price field. Returns None if missing or blank; raises on non-positive number."""
-    text = _clean(value)
-    if text is None:
-        return None
-    price = cast_float(value, field_name)
-    if price <= 0:
-        raise IngestError(f"{field_name}={value!r} is not a positive price")
-    return price
-
-
 def parse_date(value: Any) -> str:
-    """Normalise the feed's date to an ISO YYYY-MM-DD string."""
+    """Normalise the feed's date to an ISO ``YYYY-MM-DD`` string."""
     if isinstance(value, (date, datetime)):
         return value.strftime("%Y-%m-%d")
     text = None if value is None else str(value).strip()
@@ -193,10 +173,6 @@ def parse_record(raw: dict) -> dict:
             row[column] = parse_date(value)
         elif kind == "price":
             row[column] = cast_price(value, raw_key)
-        elif kind == "price_optional":
-            if column in row and row[column] is not None:
-                continue
-            row[column] = cast_price_optional(value, raw_key)
         elif kind == "int":
             row[column] = cast_int(value, raw_key, default=0)
         else:
@@ -245,6 +221,7 @@ def parse_records(raws: Iterable[dict]) -> IngestReport:
             logger.warning(message)
         key = (row["ticker"], row["date"])
         if key in seen:
+            # Later record wins; the store would upsert to the same effect anyway.
             report.rows[seen[key]] = row
             report.warnings.append(f"{key[0]} {key[1]}: duplicate record in payload")
         else:
@@ -254,7 +231,12 @@ def parse_records(raws: Iterable[dict]) -> IngestReport:
 
 
 def extract_records(payload: Any) -> list[dict]:
-    """Pull the record list out of whatever envelope the response arrives in."""
+    """Pull the record list out of whatever envelope the response arrives in.
+
+    Accepts a bare list, or a dict wrapping the list under any key (``data``,
+    ``Data``, ``d``, ``items``, ...), at any nesting depth. A record is
+    recognised by carrying a ``Symbol`` key.
+    """
     if isinstance(payload, list):
         if all(isinstance(item, dict) for item in payload) and (
             not payload or any("Symbol" in item for item in payload)
@@ -269,6 +251,7 @@ def extract_records(payload: Any) -> list[dict]:
         if "Symbol" in payload:
             return [payload]
         if isinstance(payload.get("d"), str):
+            # Some ASP.NET endpoints double-encode the body as a JSON string.
             return extract_records(json.loads(payload["d"]))
         for value in payload.values():
             found = extract_records(value)
@@ -286,17 +269,7 @@ def load_json(path: str | Path) -> list[dict]:
     return records
 
 
-# --------------------------------------------------------------------------- live feeds
-
-
-def fetch_stockbiz_statistics(
-    client: StockbizClient,
-    symbol: str,
-    start: str,
-    end: str,
-) -> list[dict]:
-    """Fetch raw trading statistics from Stockbiz SOAP service."""
-    return client.get_trading_statistics(symbol, start, end)
+# --------------------------------------------------------------------------- live feed
 
 
 def fetch_trading_statistics(
@@ -307,7 +280,16 @@ def fetch_trading_statistics(
     url: str | None = None,
     timeout: float = 30.0,
 ) -> list[dict]:
-    """Fetch raw records from the live feed."""
+    """Fetch raw records from the live feed.
+
+    The endpoint is supplied by the operator via ``TA_AGENT_API_URL`` (or the
+    ``url`` argument); an optional bearer token comes from
+    ``TA_AGENT_API_TOKEN``. Query parameter names follow the documented feed
+    (``symbol``, ``fromDate``, ``toDate``); override them with
+    ``TA_AGENT_API_PARAMS`` as a JSON object of ``{"our_name": "their_name"}``
+    if the real endpoint spells them differently. The response envelope does not
+    need to be known in advance, ``extract_records`` handles it.
+    """
     url = url or os.environ.get("TA_AGENT_API_URL")
     if not url:
         raise IngestError(
@@ -327,8 +309,10 @@ def fetch_trading_statistics(
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     logger.info("fetching %s %s..%s", ticker, start, end)
+    # Transport and auth problems are the operator's to fix, so they get the
+    # endpoint's own words back rather than a urllib traceback.
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()[:500]
@@ -346,6 +330,7 @@ def fetch_trading_statistics(
     try:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
+        # An HTML login or error page is the usual culprit here.
         raise IngestError(
             f"feed response from {url} is not JSON ({exc}); first 200 chars: {body[:200]!r}"
         ) from exc
