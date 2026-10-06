@@ -45,17 +45,7 @@ CHECKS: dict[str, str] = {
     "macd.macd": "groups.trend.macd.latest.macd",
     "macd.signal": "groups.trend.macd.latest.signal",
     "macd.histogram": "groups.trend.macd.latest.histogram",
-    "adx_14.adx": "groups.trend.adx_14.latest.adx",
-    "adx_14.plus_di": "groups.trend.adx_14.latest.plus_di",
-    "adx_14.minus_di": "groups.trend.adx_14.latest.minus_di",
-    "ichimoku.tenkan_sen": "groups.trend.ichimoku.latest.tenkan_sen",
-    "ichimoku.kijun_sen": "groups.trend.ichimoku.latest.kijun_sen",
-    "ichimoku.senkou_span_a": "groups.trend.ichimoku.latest.senkou_span_a",
-    "ichimoku.senkou_span_b": "groups.trend.ichimoku.latest.senkou_span_b",
-    "ichimoku.chikou_span": "groups.trend.ichimoku.latest.chikou_span",
     "rsi_14": "groups.momentum.rsi_14.latest",
-    "stoch_14_3.k": "groups.momentum.stoch_14_3.latest.k",
-    "stoch_14_3.d": "groups.momentum.stoch_14_3.latest.d",
     "bollinger_20_2.middle": "groups.volatility.bollinger_20_2.latest.middle",
     "bollinger_20_2.upper": "groups.volatility.bollinger_20_2.latest.upper",
     "bollinger_20_2.lower": "groups.volatility.bollinger_20_2.latest.lower",
@@ -64,7 +54,6 @@ CHECKS: dict[str, str] = {
     "close_to_close_volatility_20": (
         "groups.volatility.close_to_close_volatility_20.latest"
     ),
-    "atr_14": "groups.volatility.atr_14.latest",
     "buy_sell_volume_imbalance": "groups.volume_flow.buy_sell_volume_imbalance_5.latest",
     "buy_sell_volume_imbalance_avg_5": (
         "groups.volume_flow.buy_sell_volume_imbalance_5.latest_rolling_avg"
@@ -130,6 +119,9 @@ def compare(expected: Any, actual: Any) -> dict:
     expected = float(expected)
     actual = float(actual)
     if expected == 0.0 and actual == 0.0:
+        return {"status": "pass", "expected": expected, "actual": actual, "relative": 0.0}
+    # Absolute tolerance: tiny floating-point artefacts near zero should not fail.
+    if abs(expected - actual) < 1e-9:
         return {"status": "pass", "expected": expected, "actual": actual, "relative": 0.0}
     scale = max(abs(expected), abs(actual))
     relative = abs(expected - actual) / scale

@@ -1,0 +1,226 @@
+================================================================================
+BÁO CÁO PHẢN HỒI KỸ THUẬT & DÒNG TIỀN THEO BỘ CÂU HỎI TEST_PROMPTS
+Hệ thống: Kỹ năng Thống kê Giao dịch & Phân tích Kỹ thuật (trading_statistics)
+Nguồn dữ liệu: Daily Close-Only Feed | Phiên chốt dữ liệu: 22/01/2026
+================================================================================
+
+--------------------------------------------------------------------------------
+CÂU HỎI 1: Phân tích toàn diện kỹ thuật và dòng tiền của VNM.
+--------------------------------------------------------------------------------
+### Summary
+Tại phiên giao dịch ngày 22/01/2026, cổ phiếu VNM đóng cửa ở mức 67.890 VND, tăng +1,71% so với phiên trước, với trạng thái kỹ thuật chủ đạo là 2/3 khung thời gian nghiêng về xu hướng giảm và chịu áp lực điều chỉnh sau nhịp giảm dài hạn.
+
+### Answer
+Phân tích kỹ thuật cổ phiếu VNM (Công ty Cổ phần Sữa Việt Nam) trong ba khung thời gian:
+
+1. Khung ngắn hạn (ngày đến vài tuần):
+- Giá hiện tại: 67.890 VND (+1,71%).
+- Đường trung bình ngắn hạn: Đường SMA5 ở mức 68.186 VND, thấp hơn đường SMA10 (68.579 VND) và SMA20 (68.446 VND), cho thấy xu hướng giá ngắn hạn đang chịu áp lực điều chỉnh giảm nhẹ.
+- Chỉ báo RSI ở mức 48,57, thuộc vùng trung tính nhưng nghiêng về xu hướng suy yếu.
+- Chỉ báo MACD ở mức 65,57 nằm dưới đường tín hiệu (123,52), histogram âm (−57,95) xác nhận áp lực bán chiếm ưu thế trong ngắn hạn.
+- Giá đóng cửa nằm giữa dải Bollinger Bands trong khoảng 66.688 – 70.204 VND; dải Bollinger đang co thắt hẹp với độ rộng 5,14% phản ánh biên độ biến động đang nén lại.
+- Các mức hỗ trợ quan trọng quanh 66.752 VND; kháng cự quan trọng quanh 68.286 VND.
+- Kết luận ngắn hạn: Cấu trúc ngắn hạn nghiêng tiêu cực mạnh với độ tin cậy cao, giá chịu áp lực bán dưới các đường trung bình ngắn hạn và vùng 66.752 VND là ngưỡng hỗ trợ phòng thủ then chốt cần quan sát.
+
+2. Khung trung hạn (vài tuần đến vài tháng):
+- Vị thế các đường trung bình trung hạn: Đường SMA20 (68.446 VND) và SMA50 (68.184 VND) nằm dưới SMA100 (71.798 VND) và SMA200 (74.322 VND), cho thấy áp lực giảm giá trung hạn vẫn chưa được giải tỏa hoàn toàn, dù đường SMA20 đã cắt lên SMA50 tạo giao cắt vàng vào ngày 20/01/2026.
+- Khối lượng giao dịch trung bình và thanh khoản: Khối lượng phiên gần nhất đạt 2,35 triệu cổ phiếu, bằng 58,42% so với bình quân 20 phiên, cho thấy lực cầu chưa đột biến và dòng tiền đang ở trạng thái thận trọng.
+- Chỉ báo RSI ở mức 48,57 không vượt qua ngưỡng 50, phản ánh sự thiếu vắng động lượng tăng bền vững trong trung hạn.
+- Kết luận trung hạn: Cấu trúc trung hạn ở trạng thái trung tính với độ tin cậy thấp, thị trường đang trong giai đoạn giằng co tích lũy và chờ đợi tín hiệu dòng tiền xác nhận.
+
+3. Khung dài hạn (vài tháng đến năm):
+- Vị thế đường SMA200 quanh mức 74.322 VND cao hơn đáng kể so với thị giá hiện tại (cách −8,65%), thể hiện xu hướng dài hạn vẫn đang trong xu thế điều chỉnh giảm sau khi hình thành giao cắt tử thần giữa SMA50 và SMA200 từ ngày 11/11/2025.
+- Cổ phiếu duy trì ổn định ở vùng biên độ thấp trong thời gian qua, đứng ở vị trí 17% biên độ giá đóng cửa 126 phiên (trong khoảng 64.560 – 83.860 VND). Trên đồ thị tuần, giá nằm dưới cả SMA20 tuần (71.346 VND) và SMA50 tuần (73.861 VND), với MACD tuần âm sâu (−166,38) và RSI tuần ở mức 41,76.
+- Các chỉ báo kỹ thuật chưa cho tín hiệu bứt phá, cần theo dõi thêm quá trình kiến tạo nền giá vững chắc trước khi có thể hình thành xu hướng tăng bền vững.
+- Kết luận dài hạn: Cấu trúc dài hạn nghiêng tiêu cực mạnh với độ tin cậy cao, xu hướng giảm dài hạn vẫn đang chi phối cấu trúc tổng thể.
+
+Tổng quan nhận định:
+Cổ phiếu VNM hiện đang trong giai đoạn tích lũy giằng co quanh vùng giá thấp sau nhịp điều chỉnh dài hạn, chịu áp lực kháng cự từ hệ thống các đường trung bình trung và dài hạn đang dốc xuống. Động lượng ngắn và trung hạn duy trì ở trạng thái trung tính nhưng chịu sức ép bán nhẹ khi MACD histogram vẫn ở mức âm và thanh khoản phiên chưa bùng nổ. Vùng hỗ trợ then chốt 66.752 VND và vùng đáy 52 tuần 64.560 VND đóng vai trò là bệ đỡ kỹ thuật quan trọng cần quan sát phản ứng giá, trong khi vùng hội tụ cản 68.286 VND là ngưỡng thử thách then chốt cần vượt qua để mở ra cơ hội hồi phục.
+(Lưu ý: 2/3 khung nghiêng tiêu cực, phần còn lại trung tính; ngắn hạn và trung hạn dùng chung chỉ báo khung ngày nên không phải hai bằng chứng độc lập, trong khi dài hạn dựa chủ yếu vào đồ thị nến tuần).
+
+### Insights
+- Mức hỗ trợ gần nhất quanh 66.752 VND và kháng cự gần nhất quanh 68.286 VND (tính trên giá đóng cửa).
+- Thanh khoản phiên đạt 2,35 triệu cổ phiếu (58,42% so với bình quân 20 phiên), áp lực mua bán chủ động ở trạng thái thận trọng với hệ số mất cân đối khối lượng mua/bán 5 phiên đạt −0,079 nghiêng về bên bán.
+- Giao dịch khối ngoại: bán ròng −4,75 tỷ VND phiên gần nhất (xu hướng lũy kế 20 phiên bán ròng −96,64 tỷ VND, nhưng lũy kế 60 phiên mua ròng +198,15 tỷ VND).
+
+### Risks
+- Mốc phủ định xu hướng: giá đóng cửa vượt lên trên vùng 68.286 VND sẽ làm thay đổi cấu trúc giảm ngắn hạn; đối với trung hạn, nếu giá đóng cửa xuyên thủng vùng hỗ trợ 66.752 VND sẽ phá vỡ vùng tích lũy.
+- Yếu tố rủi ro kỹ thuật cần theo dõi: áp lực cản kỹ thuật tập trung dày đặc ngay phía trên tại 68.184 – 68.286 VND; nếu không bứt phá thành công, giá có nguy cơ quay lại kiểm định vùng hỗ trợ 66.752 VND và xa hơn là đáy 52 tuần 64.560 VND.
+- Tín hiệu xác nhận cần chờ: giá cần lấy lại mốc 68.184 VND (đường SMA50 ngày) trên giá đóng cửa đi kèm khối lượng giao dịch bứt phá vượt mức bình quân 20 phiên để xác nhận cân bằng cấu trúc.
+
+📊 Bạn muốn đi sâu vào dòng tiền & khối lượng, các mốc hỗ trợ/kháng cự chi tiết, hay kịch bản rủi ro tiếp theo?
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 2: Vậy trong ngắn hạn VNM cần điều kiện gì để xác nhận xu hướng tăng?
+--------------------------------------------------------------------------------
+*(Dữ liệu trích xuất từ phân tích VNM ở lượt trước, phiên 22/01/2026)*
+
+Hiện trạng cấu trúc ngắn hạn của VNM đang nghiêng tiêu cực mạnh với độ tin cậy cao. Thị giá đóng cửa 67.890 VND đang nằm dưới đường SMA5 (68.186 VND), EMA12 (68.247 VND) và SMA20 (68.446 VND).
+
+Để xác nhận xu hướng tăng trong ngắn hạn (từng bước đảo chiều, cân bằng cấu trúc và xác nhận đà bứt phá), VNM cần hội tụ các điều kiện kỹ thuật cụ thể sau:
+
+1. Tín hiệu xác nhận cân bằng cấu trúc:
+- Giá cần lấy lại mốc 68.184 VND (đường SMA50 ngày) trên giá đóng cửa (cách hiện tại +0,43%).
+
+2. Điều kiện vô hiệu hóa cấu trúc giảm ngắn hạn:
+- Giá cần ĐÓNG CỬA trên 68.286 VND. Đây là vùng cản hội tụ kỹ thuật rất mạnh gồm 7 yếu tố đường trung bình: EMA20, EMA26, SMA50, SMA5, EMA12, SMA20 và SMA10. Khi giá đóng cửa vượt qua 68.286 VND, nhận định tiêu cực ngắn hạn sẽ chính thức bị vô hiệu hóa.
+
+3. Điều kiện bứt phá xác nhận đà tăng tiếp diễn:
+- Giá cần vượt dứt khoát qua đường SMA20 tại 68.446 VND (+0,81%) và chinh phục vùng kháng cự đỉnh 20 phiên tại 69.457 – 69.470 VND (+2,31%, đỉnh đóng cửa ngày 14/01/2026).
+
+4. Điều kiện đồng thuận từ khối lượng và động lượng:
+- Thanh khoản: Khối lượng giao dịch cần gia tăng mạnh mẽ, vượt mức bình quân 20 phiên (phiên 22/01 khối lượng mới chỉ đạt 2,35 triệu cổ phiếu, tương đương 58,42% mức bình quân).
+- Động lượng MACD: MACD histogram ngày cần thu hẹp khoảng cách âm và cắt lên trên ngưỡng 0 (hiện histogram đang âm −57,95; đường MACD ở mức 65,57 nằm dưới đường tín hiệu 123,52).
+- Động lượng RSI: Chỉ số RSI(14) cần vượt qua ngưỡng 50 hướng lên vùng tích cực (hiện đang ở mức 48,57, vùng trung tính).
+- Dòng tiền ngoại & Cung-cầu: Khối ngoại cần dừng đà bán ròng (20 phiên qua khối ngoại bán ròng lũy kế −96,64 tỷ VND) và áp lực bán chủ động cần hạ nhiệt (hệ số mất cân đối lệnh mua/bán 5 phiên hiện là −0,079, nghiêng về bên bán).
+
+5. Điều kiện giữ vững vùng phòng thủ:
+- Giá cần duy trì đóng cửa vững chắc trên vùng hỗ trợ then chốt 66.752 VND (vùng hội tụ dải dưới Bollinger Bands, đáy 20 phiên ngày 21/01/2026 và các mốc swing close trước đó).
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 3: Đánh giá cấu trúc ngắn hạn của HPG trong vài phiên tới thế nào?
+--------------------------------------------------------------------------------
+1. Giá & Phiên gần nhất:
+- Giá đóng cửa phiên gần nhất (22/01/2026) đạt 37.050 VND (−3,84%).
+- Khối lượng giao dịch đạt 41,16 triệu cổ phiếu (41.161.420 cổ phiếu), tương ứng giá trị giao dịch 1.524,44 tỷ VND. Khối ngoại trong phiên không phát sinh giao dịch khớp lệnh trực tiếp (0,00 tỷ VND).
+
+2. Phân tích khung ngắn hạn:
+- Tín hiệu xu hướng: Cấu trúc ngắn hạn của HPG nghiêng tiêu cực vừa với độ tin cậy trung bình (cơ sở: 1 nhóm tăng / 4 nhóm giảm / 2 nhóm trung tính, độ phủ dữ liệu 100%, độ đồng thuận 52%, 1 nhóm tăng xung đột với 4 nhóm giảm).
+- Vị thế các đường trung bình ngắn hạn: Sau phiên giảm mạnh (−3,84%), thị giá 37.050 VND đóng cửa nằm dưới toàn bộ các đường trung bình ngắn hạn, bao gồm SMA20 tại 37.356 VND (−0,82%, đường SMA20 đang dốc xuống) và EMA12 tại 37.778 VND (−1,93%).
+- Động lượng và Cung-cầu: Chỉ số RSI ngày ở mức 46,30 thuộc vùng trung tính. Giá đứng ở vị trí 44% biên độ giá đóng cửa 20 phiên (trong khoảng 35.480 – 39.070 VND). Áp lực bán ngắn hạn gia tăng với chuỗi 1 phiên giảm mạnh, hệ số mất cân đối khối lượng mua/bán 5 phiên nghiêng về bên bán (−0,081) và khối ngoại bán ròng lũy kế 101,55 tỷ VND qua 20 phiên.
+- Điểm sáng xung đột tích cực: MACD ngày vẫn duy trì histogram dương ở mức +63,4 với đường MACD (49,9) nằm trên đường tín hiệu (−13,6), tạo sự phân kỳ nhất định với áp lực điều chỉnh của đường giá.
+
+3. Mốc kỹ thuật gần nhất:
+(Ghi chú cơ sở: Mọi mức giá đều tính trên GIÁ ĐÓNG CỬA, nguồn dữ liệu không có giá trong phiên).
+- Vị thế hiện tại: Thị giá 37.050 VND đang áp sát vùng kháng cự phía trên.
+- Kháng cự gần nhất: Mức 37.370 VND (+0,86%, hội tụ SMA20 và EMA50) và vùng cản mạnh 37.801 VND (+2,03%, hội tụ 5 yếu tố gồm EMA26, EMA20, EMA12, SMA50 và SMA5).
+- Hỗ trợ gần nhất: Mức 35.543 VND (−4,07%, hội tụ mốc swing close ngày 06/01/2026, đáy close 20 phiên và SMA100) và vùng 35.020 VND (−5,48%, hội tụ EMA200, swing close ngày 24/11/2025, đáy close 60 phiên và dải dưới Bollinger Bands).
+- Mốc vô hiệu hóa: Nhận định tiêu cực ngắn hạn bị vô hiệu nếu giá ĐÓNG CỬA trên 37.370 VND (SMA20 + EMA50). Tín hiệu xác nhận cân bằng là cần lấy lại mốc 37.356 VND (đường SMA20) trên giá đóng cửa.
+
+4. Kết luận ngắn hạn & Gợi mở:
+Cấu trúc ngắn hạn của HPG đang trong nhịp điều chỉnh với ưu thế nghiêng về bên bán, vùng 37.356 – 37.370 VND đóng vai trò là ngưỡng kháng cự gần cần bứt phá để tái lập thế cân bằng, trong khi vùng hỗ trợ 35.543 VND là điểm tựa kỹ thuật cần theo dõi lực đỡ.
+📊 Bạn muốn đi sâu vào dòng tiền & khối lượng, các mốc hỗ trợ/kháng cự chi tiết, hay triển vọng trung và dài hạn của HPG?
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 4: Xu hướng dài hạn của TNG có tích cực không, mốc vô hiệu hóa ở đâu?
+--------------------------------------------------------------------------------
+1. Kết luận trực diện xu hướng dài hạn:
+Xu hướng dài hạn của TNG KHÔNG TÍCH CỰC. Cấu trúc dài hạn nghiêng tiêu cực mạnh với độ tin cậy cao (cơ sở: 0 nhóm tăng / 6 nhóm giảm / 2 nhóm trung tính, độ phủ dữ liệu 100%, độ đồng thuận 100% giữa các nhóm chỉ báo dài hạn).
+
+2. Giá & Phiên gần nhất:
+- Phiên gần nhất (22/01/2026): Giá đóng cửa 13.060 VND (+1,95%), khối lượng giao dịch đạt 0,87 triệu cổ phiếu (867.950 cổ phiếu), giá trị giao dịch 11,31 tỷ VND, khối ngoại không phát sinh giao dịch ròng.
+
+3. Phân tích cấu trúc dài hạn & Vị thế nến tuần:
+- Vị thế các đường trung bình dài hạn: Thị giá 13.060 VND nằm dưới toàn bộ 2 đường trung bình tuần quan trọng gồm SMA50 tuần tại 14.272 VND (−8,49%) và SMA20 tuần tại 13.630 VND (−4,18%). Trên đồ thị ngày, giá nằm dưới đường SMA200 tại 14.384 VND (−9,20%, đường SMA200 đang dốc xuống) sau khi chịu tác động từ giao cắt tử thần giữa SMA50 và SMA200 từ ngày 06/03/2025.
+- Động lượng dài hạn: MACD tuần âm sâu với đường MACD ở mức −802,6, đường tín hiệu −634,7 và histogram âm −167,9. Chỉ số RSI tuần ghi nhận ở mức 46,30 thuộc vùng trung tính. Thị giá đứng ở mức 48% biên độ giá đóng cửa 126 phiên (trong khoảng 10.450 – 15.890 VND) và hiệu suất 250 phiên sụt giảm −24,55%. Khối ngoại 120 phiên bán ròng lũy kế −0,13 tỷ VND (1/120 phiên mua ròng).
+
+4. Mốc kỹ thuật & Thống kê 52 tuần:
+(Ghi chú cơ sở: Mọi mức giá và đỉnh/đáy tính trên GIÁ ĐÓNG CỬA, không phải trong phiên).
+- Thống kê 52 tuần: Cửa sổ 250 phiên (~50 tuần, từ 03/02/2025 đến 22/01/2026, đạt chuẩn đủ 52 tuần). Đỉnh 52 tuần tại 19.100 VND (ngày 06/02/2025, cách −31,62%), đáy 52 tuần tại 10.450 VND (ngày 30/12/2025, cách +24,98%). Hiệu suất 52 tuần giảm −25,41%, mức sụt giảm cực đại là −45,29%. Thanh khoản bình quân đạt 1,34 triệu cổ phiếu/phiên (19,31 tỷ VND/phiên).
+- Các mốc giá then chốt: Hỗ trợ gần nhất tại 12.881 VND (−1,37%, SMA50 ngày) và vùng đáy 52 tuần tại 10.450 VND (−19,98%). Kháng cự gần nhất tại 13.075 VND (+0,11%, dải trên Bollinger Bands) và 13.630 VND (+4,36%, SMA20 tuần).
+
+5. Mốc vô hiệu hóa & Tín hiệu xác nhận:
+- Mốc vô hiệu hóa: Nhận định tiêu cực dài hạn bị vô hiệu nếu giá ĐÓNG CỬA trên 13.075 VND (dải trên Bollinger Bands, cách hiện tại +0,11%).
+- Tín hiệu xác nhận cân bằng: Cổ phiếu cần lấy lại mốc 13.630 VND (đường SMA20 tuần) trên giá đóng cửa để cân bằng lại cấu trúc xu hướng dài hạn.
+
+6. Kết luận & Gợi mở:
+Cấu trúc dài hạn của TNG vẫn nằm trong xu thế giảm rõ rệt và chưa có tín hiệu đảo chiều tin cậy trên khung thời gian lớn.
+📊 Bạn muốn đi sâu vào cấu trúc ngắn hạn, dòng tiền hay các mốc hỗ trợ/kháng cự chi tiết của TNG?
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 5: Các mốc hỗ trợ và kháng cự kỹ thuật quan trọng của VNM hiện ở đâu?
+--------------------------------------------------------------------------------
+*(Dữ liệu trích xuất từ phân tích VNM ở lượt trước, phiên 22/01/2026)*
+
+1. Giá hiện tại:
+- Giá đóng cửa phiên 22/01/2026: 67.890 VND (+1,71%).
+
+2. Bảng các mốc hỗ trợ và kháng cự kỹ thuật chọn lọc:
+(Ghi chú cơ sở: Mọi mức giá đều tính trên GIÁ ĐÓNG CỬA, nguồn dữ liệu không có giá trong phiên; đây không phải đỉnh/đáy nến).
+
+| Vai trò | Mức giá (VND) | Khoảng cách | Cơ sở kỹ thuật | Số yếu tố trùng |
+|---|---|---|---|---|
+| Kháng cự 1 | 68.286 | +0,58% | EMA20 + EMA26 + SMA50 + SMA5 + EMA12 + SMA20 + SMA10 | 7 (Vùng cản mạnh nhất) |
+| Kháng cự 2 | 68.851 | +1,42% | EMA50 | 1 |
+| Kháng cự 3 | 69.457 | +2,31% | Swing close (30/12/2025) + Swing close (14/01/2026) + Đỉnh close 20 phiên (14/01/2026) | 3 |
+| Kháng cự 4 | 70.204 | +3,41% | Dải trên Bollinger Bands | 1 |
+| Kháng cự 5 | 71.906 | +5,92% | SMA100 + Swing close (26/11/2025) + Đỉnh close 60 phiên (26/11/2025) | 3 |
+| Kháng cự 6 | 72.773 | +7,19% | EMA200 | 1 |
+| Hỗ trợ 1 | 66.752 | −1,68% | Dải dưới Bollinger Bands + Đáy close 20 phiên (21/01/2026) + Swing close (06/01/2026) + Swing close (02/12/2025) | 4 (Vùng hỗ trợ then chốt) |
+| Hỗ trợ 2 | 64.560 | −4,90% | Swing close (16/12/2025) + Đáy close 60 phiên / 120 phiên / 250 phiên (16/12/2025) | 4 (Đáy 52 tuần) |
+
+3. Vị thế hiện tại & Đỉnh/đáy các chu kỳ:
+- Vị thế hiện tại: Giá 67.890 VND đang ở giữa vùng hỗ trợ và kháng cự, cách hỗ trợ gần nhất 66.752 VND (−1,68%) và kháng cự gần nhất 68.286 VND (+0,58%).
+- Đỉnh/đáy giá đóng cửa theo các chu kỳ:
+  + Chu kỳ 20 phiên: Đỉnh 69.470 VND (14/01/2026), Đáy 66.750 VND (21/01/2026).
+  + Chu kỳ 60 phiên: Đỉnh 71.960 VND (26/11/2025), Đáy 64.560 VND (16/12/2025).
+  + Chu kỳ 120 phiên: Đỉnh 83.860 VND (20/08/2025), Đáy 64.560 VND (16/12/2025).
+  + Chu kỳ 250 phiên: Đỉnh 84.360 VND (05/02/2025), Đáy 64.560 VND (16/12/2025).
+- Mốc giá vô hiệu hóa xu hướng ngắn hạn: Đóng cửa trên 68.286 VND.
+
+4. Phạm vi báo cáo:
+Báo cáo này tập trung chuyên biệt vào các mốc kỹ thuật đo lường từ giá đóng cửa, không đánh giá lại xu hướng đa khung (theo danh mục các mục lược bỏ của phạm vi mốc giá, hoàn toàn không phải thiếu dữ liệu).
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 6: Tuần này khối ngoại đang mua ròng hay bán ròng cổ phiếu HPG?
+--------------------------------------------------------------------------------
+- Tính trong tuần này (cửa sổ 5 phiên giao dịch gần nhất tính đến phiên 22/01/2026), khối ngoại đang **MUA RÒNG** cổ phiếu HPG với tổng giá trị mua ròng đạt **+8,50 tỷ VND** (chính xác: 8.502.729.008 VND).
+- Tỷ lệ tham gia trung bình của khối ngoại trong 5 phiên chiếm **9,14%** tổng giá trị giao dịch; xu hướng room ngoại trong 5 phiên giảm nhẹ **−211.195 cổ phiếu** (trạng thái room ổn định).
+- *(Lưu ý thêm: Riêng phiên gần nhất ngày 22/01/2026, khối ngoại không phát sinh giao dịch khớp lệnh trực tiếp; xét trên cửa sổ 20 phiên gần đây, khối ngoại bán ròng lũy kế −101,55 tỷ VND).*
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 7: Chỉ số RSI(14) của TNG phiên gần nhất là bao nhiêu, đã vào vùng quá mua chưa?
+--------------------------------------------------------------------------------
+- Tại phiên giao dịch gần nhất (ngày 22/01/2026), chỉ số **RSI(14)** của TNG ghi nhận ở mức **60,46** (chính xác: 60,4585).
+- Đánh giá kỹ thuật: Chỉ số RSI(14) đang nằm trong **vùng trung tính** và **CHƯA vào vùng quá mua** (ngưỡng kỹ thuật xác nhận vùng quá mua tiêu chuẩn là RSI ≥ 70).
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 8: RSI của VNM vào ngày 2 tháng 1 năm 2026 là bao nhiêu?
+--------------------------------------------------------------------------------
+- Tại ngày **02/01/2026** (phiên giao dịch hợp lệ, ngày hiệu lực: 2026-01-02), chỉ số **RSI(14)** của VNM ghi nhận ở mức **52,71** (chính xác: 52,7088), thuộc **vùng trung tính**.
+- *(Ghi chú: Mọi giá trị được tính toán chính xác tại thời điểm đóng cửa ngày 02/01/2026 theo tham số as_of, hoàn toàn không phải giá trị của phiên gần nhất hiện tại).*
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 9: Tính chỉ số ATR và định giá P/E hiện tại của HPG giúp tôi.
+--------------------------------------------------------------------------------
+1. Về chỉ số ATR:
+- **Không khả dụng** với nguồn dữ liệu hiện tại do nguồn cấp chỉ có giá đóng cửa (close-only), không có dữ liệu giá Cao nhất (High) và Thấp nhất (Low) trong ngày để tính ATR thực sự. Hệ thống tuyệt đối không tính xấp xỉ ATR.
+- **Chỉ báo thay thế:** Biến động giá đóng cửa theo ngày (close-to-close realized volatility, ghi rõ: *"biến động close-to-close, thay thế ATR, không phải ATR"*) tính trên 20 phiên gần nhất (phiên 22/01/2026):
+  + Biến động ngày: **2,60%/ngày**
+  + Biến động chuẩn hóa năm: **41,21%/năm**
+  + Khoảng cách cắt lỗ / tham chiếu kỹ thuật gợi ý: **5,19%**
+
+2. Về định giá P/E:
+- **Không khả dụng / Từ chối:** Hệ thống chỉ phục vụ phân tích kỹ thuật và dòng tiền giao dịch từ giá đóng cửa, hoàn toàn không có dữ liệu tài chính cơ bản doanh nghiệp (báo cáo tài chính, lợi nhuận, EPS, P/E) hay tin tức thị trường. Do đó, hệ thống từ chối cung cấp định giá P/E và không phỏng đoán số liệu ngoài cơ sở dữ liệu.
+
+
+--------------------------------------------------------------------------------
+CÂU HỎI 10: So sánh sức mạnh kỹ thuật giữa VNM và HPG xem mã nào khỏe hơn.
+--------------------------------------------------------------------------------
+1. Ranh giới phạm vi phục vụ và nguyên tắc hệ thống:
+- Căn cứ quy tắc tại SKILL.md: Hệ thống chỉ phân tích **từng mã cổ phiếu đơn lẻ** (Chế độ 1 và Chế độ 3). Khi câu hỏi chứa nhiều mã, hệ thống **chỉ phân tích mã đầu tiên được nhắc đến** (ở đây là **VNM**).
+- Căn cứ Quy tắc R1 và R7: Hệ thống thuần túy phân tích kỹ thuật khách quan từ dữ liệu đo lường thực tế, **tuyệt đối không đưa ra nhận định chủ quan gán nhãn so sánh mã nào "khỏe hơn"** và **không đưa ra lời khuyên mua/bán hay khuyến nghị đầu tư**. Dưới đây là các dữ liệu kỹ thuật đo lường thực tế của từng mã phiên 22/01/2026 để nhà đầu tư tự đối chiếu.
+
+2. Tóm lược kỹ thuật mã VNM (mã đầu tiên, phiên 22/01/2026):
+- Thị giá: 67.890 VND (+1,71%).
+- Cấu trúc xu hướng: 2/3 khung thời gian nghiêng tiêu cực mạnh (ngắn hạn: nghiêng tiêu cực mạnh, độ tin cậy cao; dài hạn: nghiêng tiêu cực mạnh, độ tin cậy cao; trung hạn: trung tính, độ tin cậy thấp).
+- Vị thế đường trung bình: Nằm dưới toàn bộ các đường trung bình chính (SMA20 tại 68.446 VND cách −0,81%, SMA50 tại 68.184 VND cách −0,43%, SMA200 tại 74.322 VND cách −8,65%, SMA20 tuần tại 71.346 VND cách −4,84%).
+- Động lượng & Dòng tiền: MACD histogram âm (−57,95), RSI(14) ở mức 48,57 (vùng trung tính), khối ngoại 20 phiên bán ròng lũy kế −96,64 tỷ VND. Mốc cần lấy lại để cân bằng ngắn hạn là 68.184 VND (SMA50); nhận định tiêu cực ngắn hạn bị vô hiệu nếu đóng cửa trên 68.286 VND.
+
+3. Dữ liệu kỹ thuật đối chiếu tham khảo của HPG (phiên 22/01/2026):
+- Thị giá: 37.050 VND (−3,84%).
+- Cấu trúc xu hướng: Ngắn hạn nghiêng tiêu cực vừa (độ tin cậy trung bình); trung hạn trung tính (độ tin cậy thấp); dài hạn nghiêng tích cực (độ tin cậy thấp).
+- Vị thế đường trung bình: Nằm dưới SMA20 (37.356 VND cách −0,82%) và EMA12 (37.778 VND cách −1,93%), nhưng giữ được vị thế nằm trên SMA200 ngày (33.615 VND cách +10,22%) và SMA20 tuần (35.987,5 VND cách +2,95%).
+- Động lượng & Dòng tiền: MACD histogram dương (+63,4), RSI(14) ở mức 46,30 (vùng trung tính), khối ngoại tuần này mua ròng +8,50 tỷ VND (dù 20 phiên bán ròng lũy kế 101,55 tỷ VND). Mốc cần lấy lại để cân bằng ngắn hạn là 37.356 VND (SMA20); nhận định tiêu cực ngắn hạn bị vô hiệu nếu đóng cửa trên 37.370 VND.
+
+4. Khuyến cáo hệ thống:
+Hệ thống không xếp hạng hay đánh giá mã nào vượt trội hơn mà cung cấp số liệu đo lường khách quan để nhà đầu tư đối chiếu theo phương pháp quản trị rủi ro cá nhân. Để xem phân tích chuyên sâu chi tiết cho từng mã, nhà đầu tư vui lòng yêu cầu phân tích độc lập cho từng mã theo Chế độ 1.
+================================================================================

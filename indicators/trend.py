@@ -1,8 +1,10 @@
-"""Group A: trend. SMA, EMA, MACD, and ADX/DMI.
+"""Group A: trend. SMA, EMA, MACD on close.
 
 EMA seeding follows the TA-Lib convention: the first EMA value is the simple
-average of the first `n` closes, and the recursion runs from there.
-ADX (Average Directional Index) is computed via Wilder smoothing on +DM, -DM, and TR.
+average of the first `n` closes, and the recursion runs from there. This is
+stated explicitly because pandas' ``ewm(adjust=False)`` seeds on the *first
+observation* instead, which produces different early values and would not match
+the independent ground-truth implementation in ``scripts/ground_truth.py``.
 """
 
 from __future__ import annotations
@@ -29,12 +31,25 @@ def ema_series(close: pd.Series, n: int) -> pd.Series:
 
 
 def sma(close: pd.Series, n: int = 20) -> dict:
-    """Rolling mean of close over `n` rows."""
+    """Rolling mean of close over `n` rows, with direction."""
     marker = require(close, n, f"sma({n})")
     if marker:
         return marker
     series = pd.to_numeric(close, errors="coerce").rolling(n).mean()
-    return {"window": n, "latest": latest(series), "series": series}
+    current = latest(series)
+    slope_lookback = min(5, len(series) - n)
+    direction = "unknown"
+    if slope_lookback > 0 and current is not None:
+        prior = finite(series.iloc[-1 - slope_lookback])
+        if prior is not None and prior != 0:
+            pct_change = (current - prior) / prior
+            if pct_change > 0.001:
+                direction = "rising"
+            elif pct_change < -0.001:
+                direction = "falling"
+            else:
+                direction = "flat"
+    return {"window": n, "latest": current, "direction": direction, "series": series}
 
 
 def ema(close: pd.Series, n: int = 20) -> dict:
@@ -61,6 +76,9 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> d
         return marker
 
     macd_line = ema_series(close, fast) - ema_series(close, slow)
+    # The signal line is an EMA of the MACD line, which only exists from index
+    # slow-1 onward. Seed it on that live section so the recursion is not
+    # contaminated by leading NaNs.
     live = macd_line.dropna()
     signal_live = ema_series(live, signal)
     signal_line = signal_live.reindex(macd_line.index)
@@ -91,126 +109,6 @@ def macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> d
     }
 
 
-def adx(data: pd.DataFrame | pd.Series, n: int = 14) -> dict:
-    """Wilder's Average Directional Movement Index (ADX) over `n` periods.
-
-    Measures trend strength independently of direction.
-    Requires at least 2*n rows for double Wilder smoothing.
-    """
-    required = 2 * n
-    if isinstance(data, pd.Series):
-        return insufficient("adx requires high, low, and close columns (DataFrame)", required)
-
-    marker = require(data.index.to_series(), required, f"adx({n})")
-    if marker:
-        return marker
-
-    high = pd.to_numeric(data["high"], errors="coerce").astype("float64").to_numpy()
-    low = pd.to_numeric(data["low"], errors="coerce").astype("float64").to_numpy()
-    close = pd.to_numeric(data["close"], errors="coerce").astype("float64").to_numpy()
-    count = len(close)
-
-    plus_dm = np.zeros(count, dtype="float64")
-    minus_dm = np.zeros(count, dtype="float64")
-    tr = np.zeros(count, dtype="float64")
-
-    for i in range(1, count):
-        up_move = high[i] - high[i - 1]
-        down_move = low[i - 1] - low[i]
-        if up_move > down_move and up_move > 0:
-            plus_dm[i] = up_move
-        if down_move > up_move and down_move > 0:
-            minus_dm[i] = down_move
-        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
-
-    # Wilder smoothing on TR, +DM, -DM
-    smooth_tr = np.full(count, np.nan, dtype="float64")
-    smooth_plus_dm = np.full(count, np.nan, dtype="float64")
-    smooth_minus_dm = np.full(count, np.nan, dtype="float64")
-    plus_di = np.full(count, np.nan, dtype="float64")
-    minus_di = np.full(count, np.nan, dtype="float64")
-    dx = np.full(count, np.nan, dtype="float64")
-
-    smooth_tr[n] = float(np.mean(tr[1 : n + 1]))
-    smooth_plus_dm[n] = float(np.mean(plus_dm[1 : n + 1]))
-    smooth_minus_dm[n] = float(np.mean(minus_dm[1 : n + 1]))
-
-    for i in range(n, count):
-        if i > n:
-            smooth_tr[i] = (smooth_tr[i - 1] * (n - 1) + tr[i]) / n
-            smooth_plus_dm[i] = (smooth_plus_dm[i - 1] * (n - 1) + plus_dm[i]) / n
-            smooth_minus_dm[i] = (smooth_minus_dm[i - 1] * (n - 1) + minus_dm[i]) / n
-
-        str_val = smooth_tr[i]
-        if str_val > 0:
-            p_di = 100.0 * (smooth_plus_dm[i] / str_val)
-            m_di = 100.0 * (smooth_minus_dm[i] / str_val)
-        else:
-            p_di = 0.0
-            m_di = 0.0
-        plus_di[i] = p_di
-        minus_di[i] = m_di
-        di_sum = p_di + m_di
-        dx[i] = 100.0 * (abs(p_di - m_di) / di_sum) if di_sum > 0 else 0.0
-
-    # Wilder smoothing on DX -> ADX
-    adx_arr = np.full(count, np.nan, dtype="float64")
-    start_adx = 2 * n - 1
-    if start_adx < count:
-        adx_arr[start_adx] = float(np.mean(dx[n : start_adx + 1]))
-        prev_adx = adx_arr[start_adx]
-        for i in range(start_adx + 1, count):
-            prev_adx = (prev_adx * (n - 1) + dx[i]) / n
-            adx_arr[i] = prev_adx
-
-    adx_series = pd.Series(adx_arr, index=data.index, name=f"adx{n}")
-    plus_di_series = pd.Series(plus_di, index=data.index, name=f"plus_di{n}")
-    minus_di_series = pd.Series(minus_di, index=data.index, name=f"minus_di{n}")
-
-    adx_val = latest(adx_series)
-    plus_val = latest(plus_di_series)
-    minus_val = latest(minus_di_series)
-
-    if adx_val is None:
-        return insufficient(f"adx({n}) has no value on the latest row", required, count)
-
-    return {
-        "window": n,
-        "latest": {
-            "adx": adx_val,
-            "plus_di": plus_val,
-            "minus_di": minus_val,
-        },
-        "trend_strength": _adx_strength(adx_val),
-        "directional_bias": _adx_bias(plus_val, minus_val),
-        "adx_series": adx_series,
-        "plus_di_series": plus_di_series,
-        "minus_di_series": minus_di_series,
-    }
-
-
-def _adx_strength(val: float | None) -> str:
-    if val is None:
-        return "unknown"
-    if val >= 50:
-        return "very_strong_trend"
-    if val >= 25:
-        return "trending"
-    if val >= 20:
-        return "emerging_trend"
-    return "weak_or_ranging"
-
-
-def _adx_bias(plus: float | None, minus: float | None) -> str:
-    if plus is None or minus is None:
-        return "unknown"
-    if plus > minus + 1.0:
-        return "bullish"
-    if minus > plus + 1.0:
-        return "bearish"
-    return "neutral"
-
-
 def _crossover(previous: float | None, current: float | None) -> str:
     """Describe the histogram sign change between the last two rows."""
     if previous is None or current is None:
@@ -222,139 +120,205 @@ def _crossover(previous: float | None, current: float | None) -> str:
     return "none"
 
 
-def ichimoku(
-    data: pd.DataFrame,
-    tenkan_n: int = 9,
-    kijun_n: int = 26,
-    senkou_b_n: int = 52,
-    displacement: int = 26,
-) -> dict:
-    """Ichimoku Kinko Hyo (Equilibrium Chart).
+def returns_by_window(close: pd.Series, windows=(5, 20, 60, 120)) -> dict:
+    """% return from N sessions ago to the latest close. Omits a window key
+    entirely (does not return 0 or null) when there isn't enough history,
+    per the addendum's contract."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n <= w:
+            continue  # insufficient_data for this window, omit the key
+        past = close.iloc[-(w + 1)]
+        latest = close.iloc[-1]
+        if past == 0:
+            continue
+        out[key] = round(float((latest - past) / past * 100), 2)
+    return out
 
-    Components (classic 9, 26, 52 parameters):
-      - Tenkan-sen (Conversion Line): (9-period High + 9-period Low) / 2
-      - Kijun-sen (Base Line): (26-period High + 26-period Low) / 2
-      - Senkou Span A (Leading Span A): (Tenkan-sen + Kijun-sen) / 2
-      - Senkou Span B (Leading Span B): (52-period High + 52-period Low) / 2
-      - Chikou Span (Lagging Span): Close
-    """
-    required = senkou_b_n
-    marker = require(data.index.to_series(), required, f"ichimoku({tenkan_n},{kijun_n},{senkou_b_n})")
-    if marker:
-        return marker
 
-    high = pd.to_numeric(data["high"], errors="coerce").astype("float64")
-    low = pd.to_numeric(data["low"], errors="coerce").astype("float64")
-    close = pd.to_numeric(data["close"], errors="coerce").astype("float64")
+def detect_sma_crossover(close: pd.Series, fast: int, slow: int, dates: pd.Series = None) -> dict:
+    """Most recent golden/death cross between two SMAs, with the date it
+    happened. `dates` should be the same length as `close`, aligned index.
+    If omitted, close.index itself must be a real DatetimeIndex -- this
+    function refuses to guess a date from a plain integer position, since a
+    wrong-but-plausible-looking date (e.g. silently defaulting to the Unix
+    epoch) is worse than an explicit error."""
+    if len(close) < slow + 2:
+        return {"last_event": "none", "date": None}
 
-    tenkan = (high.rolling(tenkan_n).max() + low.rolling(tenkan_n).min()) / 2.0
-    kijun = (high.rolling(kijun_n).max() + low.rolling(kijun_n).min()) / 2.0
-    senkou_a = (tenkan + kijun) / 2.0
-    senkou_b = (high.rolling(senkou_b_n).max() + low.rolling(senkou_b_n).min()) / 2.0
-
-    tenkan_now = latest(tenkan)
-    kijun_now = latest(kijun)
-    senkou_a_now = latest(senkou_a)
-    senkou_b_now = latest(senkou_b)
-    close_now = latest(close)
-
-    if tenkan_now is None or kijun_now is None or senkou_a_now is None or senkou_b_now is None:
-        return insufficient(
-            f"ichimoku({tenkan_n},{kijun_n},{senkou_b_n}) has no value on the latest row",
-            required,
-            int(len(data)),
+    if dates is None and not isinstance(close.index, pd.DatetimeIndex):
+        raise ValueError(
+            "detect_sma_crossover: no `dates` argument was given and close.index "
+            "is not a DatetimeIndex. Pass the real session dates explicitly rather "
+            "than relying on a positional index, otherwise the returned date is "
+            "meaningless."
         )
 
-    t_prev = float(tenkan.iloc[-2]) if len(tenkan) > 1 else None
-    k_prev = float(kijun.iloc[-2]) if len(kijun) > 1 else None
-    if t_prev is not None and k_prev is not None:
-        if t_prev <= k_prev and tenkan_now > kijun_now:
-            tk_cross = "bullish_cross"
-        elif t_prev >= k_prev and tenkan_now < kijun_now:
-            tk_cross = "bearish_cross"
-        elif tenkan_now > kijun_now:
-            tk_cross = "bullish_alignment"
-        elif tenkan_now < kijun_now:
-            tk_cross = "bearish_alignment"
-        else:
-            tk_cross = "neutral"
-    else:
-        tk_cross = (
-            "bullish_alignment"
-            if tenkan_now > kijun_now
-            else "bearish_alignment"
-            if tenkan_now < kijun_now
-            else "neutral"
-        )
+    sma_fast = close.rolling(fast).mean()
+    sma_slow = close.rolling(slow).mean()
+    diff = sma_fast - sma_slow
+    diff = diff.dropna()
 
-    cloud_top = max(senkou_a_now, senkou_b_now)
-    cloud_bottom = min(senkou_a_now, senkou_b_now)
-    cloud_thickness = abs(senkou_a_now - senkou_b_now)
-    cloud_thickness_pct = (cloud_thickness / close_now * 100.0) if close_now and close_now > 0 else 0.0
+    if len(diff) < 2:
+        return {"last_event": "none", "date": None}
 
-    if senkou_a_now > senkou_b_now:
-        kumo_sentiment = "bullish"
-    elif senkou_a_now < senkou_b_now:
-        kumo_sentiment = "bearish"
-    else:
-        kumo_sentiment = "neutral"
+    sign = (diff > 0).astype(int)
+    change = sign.diff().dropna()  # dropna to exclude leading NaN from diff
 
-    if close_now is not None and close_now > cloud_top:
-        price_vs_cloud = "above_cloud"
-    elif close_now is not None and close_now < cloud_bottom:
-        price_vs_cloud = "below_cloud"
-    else:
-        price_vs_cloud = "inside_cloud"
+    crossings = change[change != 0]
+    if crossings.empty:
+        return {"last_event": "none", "date": None}
 
-    return {
-        "tenkan_window": tenkan_n,
-        "kijun_window": kijun_n,
-        "senkou_b_window": senkou_b_n,
-        "displacement": displacement,
-        "latest": {
-            "tenkan_sen": tenkan_now,
-            "kijun_sen": kijun_now,
-            "senkou_span_a": senkou_a_now,
-            "senkou_span_b": senkou_b_now,
-            "chikou_span": close_now,
-        },
-        "tk_cross": tk_cross,
-        "kumo_sentiment": kumo_sentiment,
-        "price_vs_cloud": price_vs_cloud,
-        "cloud_thickness": cloud_thickness,
-        "cloud_thickness_pct": cloud_thickness_pct,
-        "tenkan_series": tenkan.rename("tenkan_sen"),
-        "kijun_series": kijun.rename("kijun_sen"),
-        "senkou_a_series": senkou_a.rename("senkou_span_a"),
-        "senkou_b_series": senkou_b.rename("senkou_span_b"),
-        "chikou_series": close.rename("chikou_span"),
-        "chikou_shifted_series": close.shift(-displacement).rename("chikou_span_shifted"),
-    }
+    last_idx = crossings.index[-1]
+    event = "golden_cross" if crossings.iloc[-1] == 1 else "death_cross"
+
+    date_value = dates.loc[last_idx] if dates is not None else last_idx
+    if isinstance(date_value, pd.Series):
+        date_value = date_value.iloc[-1]
+    date_str = pd.Timestamp(date_value).strftime("%Y-%m-%d")
+    return {"last_event": event, "date": date_str}
 
 
-def trend_group(data: pd.DataFrame | pd.Series, params: dict | None = None) -> dict:
+def trend_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group A indicator, keyed by name."""
     params = params or {}
-    close = data["close"] if isinstance(data, pd.DataFrame) else data
-    sma_windows = params.get("sma_windows", (20, 50, 200))
-    ema_windows = params.get("ema_windows", (12, 26))
+    sma_windows = params.get("sma_windows", (5, 10, 20, 50, 100, 200))
+    ema_windows = params.get("ema_windows", (12, 20, 26, 50, 200))
     out: dict[str, dict] = {}
+    latest_c = latest(close)
+
     for n in sma_windows:
-        out[f"sma_{n}"] = sma(close, n)
+        res = sma(close, n)
+        if isinstance(res, dict) and "latest" in res and res["latest"] is not None and latest_c is not None:
+            ma_val = res["latest"]
+            res["distance_pct"] = round((latest_c - ma_val) / ma_val * 100, 2) if ma_val > 0 else None
+        out[f"sma_{n}"] = res
+
     for n in ema_windows:
-        out[f"ema_{n}"] = ema(close, n)
+        res = ema(close, n)
+        if isinstance(res, dict) and "latest" in res and res["latest"] is not None and latest_c is not None:
+            ma_val = res["latest"]
+            res["distance_pct"] = round((latest_c - ma_val) / ma_val * 100, 2) if ma_val > 0 else None
+        out[f"ema_{n}"] = res
+
     out["macd"] = macd(
         close,
         params.get("macd_fast", 12),
         params.get("macd_slow", 26),
         params.get("macd_signal", 9),
     )
-    if isinstance(data, pd.DataFrame) and "high" in data.columns and "low" in data.columns:
-        adx_n = params.get("adx_window", 14)
-        out[f"adx_{adx_n}"] = adx(data, adx_n)
-        tenkan_n = params.get("ichimoku_tenkan", 9)
-        kijun_n = params.get("ichimoku_kijun", 26)
-        senkou_b_n = params.get("ichimoku_senkou_b", 52)
-        displacement = params.get("ichimoku_displacement", 26)
-        out["ichimoku"] = ichimoku(data, tenkan_n, kijun_n, senkou_b_n, displacement)
+    return_windows = params.get("return_windows", (5, 20, 60, 120, 250))
+    out["returns"] = returns_by_window(close, return_windows)
+    out["returns_by_window"] = out["returns"]
+
+    dates = params.get("dates")
+    if dates is None and not isinstance(close.index, pd.DatetimeIndex):
+        if len(close) > 0 and isinstance(close.index[0], str):
+            try:
+                pd.Timestamp(close.index[0])
+                dates = pd.Series(close.index, index=close.index)
+            except Exception:
+                dates = None
+
+    crossover_pairs = params.get("crossover_pairs", ((20, 50), (50, 200)))
+    for fast, slow in crossover_pairs:
+        key = f"sma_crossover_{fast}_{slow}"
+        try:
+            out[key] = detect_sma_crossover(close, fast, slow, dates=dates)
+        except ValueError:
+            out[key] = {"last_event": "none", "date": None}
+
+    open_ = params.get("open")
+    high = params.get("high")
+    low = params.get("low")
+    prev_close = params.get("prev_close")
+    if (
+        isinstance(open_, pd.Series)
+        and isinstance(high, pd.Series)
+        and isinstance(low, pd.Series)
+    ):
+        o_num = pd.to_numeric(open_, errors="coerce")
+        h_num = pd.to_numeric(high, errors="coerce")
+        l_num = pd.to_numeric(low, errors="coerce")
+        if o_num.notna().any() and h_num.notna().any() and l_num.notna().any():
+            out["candlestick"] = candlestick_metrics(open_, high, low, close, prev_close=prev_close)
+
     return out
+
+
+def candlestick_metrics(
+    open_: pd.Series,
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    prev_close: pd.Series | None = None,
+) -> dict:
+    """Candlestick geometry, overnight gap, and qualitative single-candle pattern."""
+    marker = require(close, 1, "candlestick_metrics")
+    if marker:
+        return marker
+
+    o_val = finite(open_.iloc[-1])
+    h_val = finite(high.iloc[-1])
+    l_val = finite(low.iloc[-1])
+    c_val = finite(close.iloc[-1])
+
+    if o_val is None or h_val is None or l_val is None or c_val is None:
+        return insufficient("candlestick_metrics has missing OHLC on latest row", 1, len(close))
+
+    # Determine prev_close for overnight gap
+    if prev_close is not None and len(prev_close) > 0:
+        pc_val = finite(prev_close.iloc[-1])
+    elif len(close) >= 2:
+        pc_val = finite(close.iloc[-2])
+    else:
+        pc_val = None
+
+    if pc_val is not None and pc_val > 0:
+        overnight_gap_pct = round((o_val - pc_val) / pc_val * 100.0, 2)
+    else:
+        overnight_gap_pct = None
+
+    candle_range = h_val - l_val
+    if candle_range > 0:
+        body = abs(c_val - o_val)
+        candle_body_ratio = round(body / candle_range, 4)
+        upper_wick = h_val - max(o_val, c_val)
+        lower_wick = min(o_val, c_val) - l_val
+        upper_wick_ratio = round(max(0.0, upper_wick) / candle_range, 4)
+        lower_wick_ratio = round(max(0.0, lower_wick) / candle_range, 4)
+    else:
+        body = 0.0
+        candle_body_ratio = 0.0
+        upper_wick_ratio = 0.0
+        lower_wick_ratio = 0.0
+
+    # Pattern recognition: "bullish_marubozu", "bearish_marubozu", "hammer", "shooting_star", "doji", "standard"
+    if candle_range == 0 or candle_body_ratio <= 0.10:
+        pattern = "doji"
+    elif c_val > o_val and candle_body_ratio >= 0.85:
+        pattern = "bullish_marubozu"
+    elif c_val < o_val and candle_body_ratio >= 0.85:
+        pattern = "bearish_marubozu"
+    elif lower_wick_ratio >= 0.55 and upper_wick_ratio <= 0.15 and 0.10 < candle_body_ratio <= 0.35:
+        pattern = "hammer"
+    elif upper_wick_ratio >= 0.55 and lower_wick_ratio <= 0.15 and 0.10 < candle_body_ratio <= 0.35:
+        pattern = "shooting_star"
+    else:
+        pattern = "standard"
+
+    return {
+        "open": o_val,
+        "high": h_val,
+        "low": l_val,
+        "close": c_val,
+        "prev_close": pc_val,
+        "overnight_gap_pct": overnight_gap_pct,
+        "candle_body_ratio": candle_body_ratio,
+        "upper_wick_ratio": upper_wick_ratio,
+        "lower_wick_ratio": lower_wick_ratio,
+        "pattern": pattern,
+    }
+

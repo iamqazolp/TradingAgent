@@ -1,12 +1,18 @@
-"""MCP server exposing three tools over the local store and indicator engine.
+"""MCP server exposing the analysis tools over the local store and indicator engine.
 
     uv run python -m mcp_server.server            # stdio transport
 
 Tools
 -----
-* ``get_price_data``     raw stored rows for a ticker
-* ``compute_indicators`` Tier 0 indicator groups
-* ``get_flow_summary``   the cheap flow-only answer
+* ``get_price_data``            raw stored rows for a ticker
+* ``compute_indicators``        Tier 0 indicator groups
+* ``get_flow_summary``          the cheap flow-only answer
+* ``analyze_multi_horizon``     scoped short / mid / long-term analysis
+* ``compute_weekly_indicators`` indicator groups on weekly bars
+* ``get_market_breadth``         market breadth and advance/decline metrics
+
+Tools that load rows server-side accept ``as_of`` to compute values as they
+stood on a past date, using only rows up to and including it.
 
 Every call is appended to the audit log (``logs/tool_calls.jsonl``, or
 ``TA_AGENT_AUDIT_LOG``) with its arguments, its computed values and its duration,
@@ -24,41 +30,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
 
 from data import store
-from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary
+from indicators.engine import GROUPS, UNSUPPORTED_METRICS, EngineError, compute, flow_summary, multi_horizon_compute
+from indicators.weekly import aggregate_weekly, weekly_quality_flags
+from mcp_server.cache import get_cache
 from mcp_server.tool_schemas import (
+    AnalyzeMultiHorizonInput,
+    CompareTickersInput,
     ComputeIndicatorsInput,
+    ComputeWeeklyInput,
     GetFlowSummaryInput,
+    GetMarketBreadthInput,
     GetPriceDataInput,
     RowSource,
     rows_as_dicts,
 )
-
-load_dotenv()
 
 logger = logging.getLogger("ta_agent.mcp")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 INSTRUCTIONS = f"""
-Technical analysis for Vietnamese stocks, computed from an hourly/daily OHLC and order-flow feed.
+Technical analysis for Vietnamese stocks, computed from a daily close-only feed.
 
-Available per ticker:
-  - OHLC prices (open, high, low, close, previous close)
-  - Timeframes: 1H (hourly), 4H (4-hour), 1D (daily), 3D (3-day), 1W (weekly), 1M (monthly), 1Y (yearly)
-  - Order flow: matched trade count, traded value (VND), traded volume, buy/sell trade counts and volumes
-  - Foreign flow: foreign buy/sell volume and value, remaining foreign room
-
-Indicators supported:
-  - Trend: SMA, EMA, MACD, ADX/DMI (Wilder), Ichimoku Kinko Hyo (Tenkan, Kijun, Kumo Cloud)
-  - Momentum: Wilder RSI(14), Stochastic (%K, %D)
-  - Volatility: Bollinger Bands, True ATR (Wilder), Realized Volatility
-  - Order & Foreign Flow: Buy/sell imbalances, Average trade size by side, Value spikes, Foreign net value, Room trend
+Available per ticker per trading day: previous close, close, matched trade count,
+traded value (VND), traded volume, buy/sell trade counts, buy/sell matched
+volumes, foreign buy/sell volume and value, and remaining foreign room.
 
 NOT available, and never to be estimated or approximated:
 {chr(10).join(f"  - {k}: {v}" for k, v in UNSUPPORTED_METRICS.items())}
@@ -67,14 +68,14 @@ Rules:
   - Never state an indicator value that did not come from one of these tools.
   - A result of {{"insufficient_data": true, ...}} means the history is too short.
     Report that, do not substitute a shorter window.
-  - close_to_close_volatility is an explicitly labelled ATR substitute; it must not be called ATR.
+  - close_to_close_volatility is an explicitly labelled ATR substitute. It is not
+    ATR and must not be called ATR.
   - Pass `ticker` to compute_indicators / get_flow_summary to have the server load
     rows itself; that is cheaper than round-tripping rows from get_price_data.
-  - Specify `timeframe` ("1H", "4H", "1D", "3D", "1W", "1M", "1Y") when doing multi-timeframe analysis.
   - Indicator groups: {", ".join(GROUPS)}.
 """.strip()
 
-server = MCPServer(name="ta-agent", version="0.2.0", instructions=INSTRUCTIONS)
+server = MCPServer(name="ta-agent", version="0.1.0", instructions=INSTRUCTIONS)
 
 
 # --------------------------------------------------------------------------- audit
@@ -108,16 +109,26 @@ def audit(tool: str, arguments: dict, *, result: Any = None, error: str | None =
 
 
 def _compact(payload: Any) -> Any:
-    """Replace bulk row lists with a count so the audit log stays readable."""
+    """Replace bulk row lists with a count so the audit log stays readable.
+
+    Only truncates ``rows`` keys (the raw input data) and very large generic
+    lists (>200 items).  Indicator result arrays (typically ≤50 items) are
+    preserved in full so every number the agent quotes can be traced.
+    """
     if isinstance(payload, dict):
         out = {}
         for key, value in payload.items():
             if key == "rows" and isinstance(value, list):
                 out["rows"] = f"<{len(value)} rows>"
+            elif key == "ticker_data" and isinstance(value, dict):
+                out["ticker_data"] = {
+                    t: f"<{len(r)} rows>" if isinstance(r, list) else r
+                    for t, r in value.items()
+                }
             else:
                 out[key] = _compact(value)
         return out
-    if isinstance(payload, list) and len(payload) > 20:
+    if isinstance(payload, list) and len(payload) > 200:
         return f"<{len(payload)} items>"
     if isinstance(payload, list):
         return [_compact(v) for v in payload]
@@ -125,7 +136,12 @@ def _compact(payload: Any) -> Any:
 
 
 def _validation_error(exc: ValidationError) -> ToolError:
-    """Flatten a pydantic error into one readable line for the agent."""
+    """Flatten a pydantic error into one readable line for the agent.
+
+    ToolError, not ValueError: an anticipated failure comes back to the model
+    with the message intact, where an unexpected exception would be reduced to
+    "Error executing tool ..." plus a traceback in the log.
+    """
     parts = [
         f"{'.'.join(str(p) for p in err['loc']) or 'input'}: {err['msg']}"
         for err in exc.errors()[:5]
@@ -141,23 +157,102 @@ def _load_rows(source: RowSource) -> tuple[list[dict], str | None, dict | None]:
 
     Returns (rows, ticker, problem). `problem` is a structured payload to return
     to the caller instead of computing, e.g. an unknown ticker.
+
+    When `as_of` is set, only rows up to and including that date are loaded, so
+    every value the engine reports is the value that stood on that date. Rolling
+    indicators must never see a row after the date being asked about.
     """
     if source.rows:
         return rows_as_dicts(source.rows), None, None
     ticker = (source.ticker or "").upper()
+    as_of = getattr(source, "as_of", None)
+    timeframe = getattr(source, "timeframe", "1d")
     conn = store.connect()
     try:
-        rows = store.get_recent(conn, ticker, source.lookback_days, timeframe=source.timeframe)
+        if timeframe == "1h":
+            hourly_rows = store.get_recent_hourly(conn, ticker, source.lookback_days)
+            if not hourly_rows:
+                available = store.list_tickers(conn)
+                return [], ticker, {
+                    "error": "unknown_ticker",
+                    "ticker": ticker,
+                    "timeframe": "1h",
+                    "message": f"no stored hourly rows for {ticker}",
+                    "available_tickers": available,
+                }
+            adapted = []
+            for i, h in enumerate(hourly_rows):
+                item = dict(h)
+                item["date"] = h["datetime"]
+                item["prev_close"] = hourly_rows[i - 1]["close"] if i > 0 else h["open"]
+                item["total_volume"] = h["volume"]
+                item["total_value"] = h["value"]
+                item["total_trade"] = 0
+                item["buy_count"] = 0
+                item["sell_count"] = 0
+                item["buy_volume"] = 0
+                item["sell_volume"] = 0
+                item["foreign_buy_volume"] = 0
+                item["foreign_sell_volume"] = 0
+                item["foreign_buy_value"] = 0.0
+                item["foreign_sell_value"] = 0.0
+                item["foreign_room"] = 0
+                adapted.append(item)
+            return adapted, ticker, None
+
+        if as_of:
+            history = store.get_range(conn, ticker, None, as_of)
+            rows = history[-source.lookback_days:]
+        else:
+            rows = store.get_recent(conn, ticker, source.lookback_days)
         if not rows:
+            available = store.list_tickers(conn)
+            if as_of and ticker in available:
+                earliest, latest = store.date_bounds(conn, ticker)
+                return [], ticker, {
+                    "error": "no_rows_before_as_of",
+                    "ticker": ticker,
+                    "as_of": as_of,
+                    "stored_range": {"start": earliest, "end": latest},
+                    "message": (
+                        f"Không có phiên giao dịch nào của {ticker} vào hoặc trước "
+                        f"{as_of}. Dữ liệu chỉ có từ {earliest} đến {latest}."
+                    ),
+                }
             return [], ticker, {
                 "error": "unknown_ticker",
                 "ticker": ticker,
                 "message": f"no stored rows for {ticker}",
-                "available_tickers": store.list_tickers(conn),
+                "available_tickers": available,
             }
         return rows, ticker, None
     finally:
         conn.close()
+
+
+def _as_of_meta(source: RowSource, rows: list[dict]) -> dict | None:
+    """Describe how an `as_of` request was resolved, for the caller to report."""
+    as_of = getattr(source, "as_of", None)
+    if not as_of or not rows:
+        return None
+    effective = rows[-1]["date"]
+    meta = {
+        "as_of_requested": as_of,
+        "as_of_effective": effective,
+        "rows_used_through": effective,
+        "is_trading_day": effective == as_of,
+    }
+    if effective != as_of:
+        meta["note"] = (
+            f"{as_of} không phải phiên giao dịch; giá trị được tính đến phiên gần "
+            f"nhất trước đó là {effective}."
+        )
+    else:
+        meta["note"] = (
+            f"Mọi giá trị 'latest' trong kết quả này là giá trị TẠI NGÀY {effective}, "
+            "không phải phiên gần nhất hiện tại."
+        )
+    return meta
 
 
 # --------------------------------------------------------------------------- tools
@@ -165,10 +260,11 @@ def _load_rows(source: RowSource) -> tuple[list[dict], str | None, dict | None]:
 
 @server.tool(
     description=(
-        "Stored trading statistics (OHLC + flow) for one ticker, oldest row first. "
-        "lookback_days counts the most recent trading bars in the requested timeframe. "
-        "timeframe options: 1H, 4H, 1D, 3D, 1W, 1M, 1Y (default: 1D). "
-        "Pass start/end to pin an explicit ISO date/datetime range instead."
+        "Stored daily trading statistics for one ticker, oldest row first. "
+        "Feed contains close, open, high, low (when available), volume, value, orders, foreign flow. "
+        "lookback_days counts the most recent trading rows (e.g. lookback_days=10 for the last 10 sessions). "
+        "IMPORTANT: When asked for 'recent', 'latest', or 'last N days/sessions', pass ONLY `ticker` and `lookback_days`. "
+        "DO NOT guess or pass `start` or `end` dates unless the user explicitly specified calendar dates in their query."
     )
 )
 def get_price_data(
@@ -176,7 +272,7 @@ def get_price_data(
     lookback_days: int = 300,
     start: str | None = None,
     end: str | None = None,
-    timeframe: str = "1D",
+    timeframe: str = "1d",
 ) -> dict:
     started = time.perf_counter()
     arguments = {
@@ -199,13 +295,50 @@ def get_price_data(
         audit("get_price_data", arguments, error=str(error), started=started)
         raise error from exc
 
+    # Everything that needs the connection happens inside this block. Building
+    # the "no rows in that range" message needs date_bounds, which was
+    # previously called after the `finally` had already closed the connection —
+    # so the one path meant to correct a hallucinated date range raised
+    # sqlite3.ProgrammingError instead of returning its guidance.
     conn = store.connect()
     try:
-        if params.start or params.end:
-            rows = store.get_range(conn, params.ticker, params.start, params.end, timeframe=params.timeframe)
-        else:
-            rows = store.get_recent(conn, params.ticker, params.lookback_days, timeframe=params.timeframe)
         available = store.list_tickers(conn)
+        if params.timeframe == "1h":
+            if params.start or params.end:
+                rows = store.get_hourly_range(conn, params.ticker, params.start, params.end)
+            else:
+                rows = store.get_recent_hourly(conn, params.ticker, params.lookback_days)
+            fell_back_from_range = False
+        elif params.start or params.end:
+            rows = store.get_range(conn, params.ticker, params.start, params.end)
+            if not rows and params.ticker in available:
+                # Caller asked for recent rows but also supplied a date range the
+                # store cannot satisfy. Fall back to the most recent sessions
+                # rather than failing the whole query.
+                rows = store.get_recent(conn, params.ticker, params.lookback_days)
+                fell_back_from_range = bool(rows)
+            else:
+                fell_back_from_range = False
+        else:
+            rows = store.get_recent(conn, params.ticker, params.lookback_days)
+            fell_back_from_range = False
+
+        if not rows:
+            if params.ticker not in available:
+                msg = f"no stored rows for {params.ticker} (ticker not in the store)"
+            elif params.start or params.end:
+                earliest, latest = store.date_bounds(conn, params.ticker)
+                msg = (
+                    f"no rows for {params.ticker} in range {params.start}..{params.end}. "
+                    f"Stored data for {params.ticker} is between {earliest} and {latest}. "
+                    f"To get the most recent sessions, call get_price_data with "
+                    f"lookback_days={params.lookback_days} and omit start/end."
+                )
+            else:
+                msg = f"no stored rows for {params.ticker}"
+        else:
+            msg = None
+        date_span = store.date_bounds(conn, params.ticker) if fell_back_from_range else None
     finally:
         conn.close()
 
@@ -216,42 +349,53 @@ def get_price_data(
             "rows": [],
             "row_count": 0,
             "error": "no_rows",
-            "message": (
-                f"no stored rows for {params.ticker}"
-                + ("" if params.ticker in available else " (ticker not in the store)")
-            ),
+            "message": msg,
             "available_tickers": available,
         }
     else:
+        date_key = "datetime" if params.timeframe == "1h" and "datetime" in rows[0] else "date"
         result = {
             "ticker": params.ticker,
             "timeframe": params.timeframe,
             "row_count": len(rows),
-            "date_range": {"start": rows[0]["date"], "end": rows[-1]["date"]},
+            "date_range": {"start": rows[0][date_key], "end": rows[-1][date_key]},
             "rows": [{k: v for k, v in row.items() if k != "ticker"} for row in rows],
         }
+        if date_span is not None:
+            # Say so when the requested range was ignored, otherwise the caller
+            # believes it received the dates it asked for.
+            result["requested_range_empty"] = {
+                "start": params.start,
+                "end": params.end,
+                "stored_range": {"start": date_span[0], "end": date_span[1]},
+                "message": (
+                    f"Không có dữ liệu trong khoảng {params.start}..{params.end}; "
+                    f"đã trả về {len(rows)} phiên gần nhất thay thế. "
+                    f"Dữ liệu {params.ticker} chỉ có từ {date_span[0]} đến {date_span[1]}."
+                ),
+            }
     audit("get_price_data", arguments, result=result, started=started)
     return result
 
 
 @server.tool(
     description=(
-        "Compute technical indicators. Supply either `ticker` (server loads the "
-        "rows, cheaper) or `rows` from get_price_data. Groups: trend (SMA, EMA, MACD, ADX), "
-        "momentum (RSI, Stochastic), volatility (Bollinger, ATR, Realized Vol), "
-        "volume_flow (OBV, volume imbalance), trade_flow (ticket size & count imbalance), "
-        "value_flow (ticket value & spike), foreign_flow (net value, room trend). "
-        "timeframe options: 1H, 4H, 1D, 3D, 1W, 1M, 1Y (default: 1D)."
+        "Compute Tier 0 indicator groups. Supply either `ticker` (server loads the "
+        "rows, cheaper) or `rows` from get_price_data. Groups: trend, momentum, "
+        "volatility, volume_flow, trade_flow, value_flow, foreign_flow. Any group "
+        "whose history is too short returns {'insufficient_data': true, ...} rather "
+        "than a number."
     )
 )
 def compute_indicators(
-    rows: list[dict] | None = None,
-    groups: list[str] | None = None,
+    rows: list[dict] | str | None = None,
+    groups: list[str] | str | None = None,
     ticker: str | None = None,
     lookback_days: int = 300,
     params: dict | None = None,
-    series_tail: int = 10,
-    timeframe: str = "1D",
+    series_tail: int = 20,
+    as_of: str | None = None,
+    timeframe: str = "1d",
 ) -> dict:
     started = time.perf_counter()
     arguments = {
@@ -261,6 +405,7 @@ def compute_indicators(
         "lookback_days": lookback_days,
         "params": params,
         "series_tail": series_tail,
+        "as_of": as_of,
         "timeframe": timeframe,
     }
     try:
@@ -271,6 +416,7 @@ def compute_indicators(
             groups=groups or list(GROUPS),
             params=params,
             series_tail=series_tail,
+            as_of=as_of,
             timeframe=timeframe,
         )
     except ValidationError as exc:
@@ -297,6 +443,9 @@ def compute_indicators(
     result["ticker"] = resolved_ticker or _ticker_hint(request)
     result["timeframe"] = request.timeframe
     result["groups_requested"] = list(request.groups)
+    as_of_meta = _as_of_meta(request, resolved)
+    if as_of_meta:
+        result["as_of"] = as_of_meta
     audit("compute_indicators", arguments, result=result, started=started)
     return result
 
@@ -305,15 +454,16 @@ def compute_indicators(
     description=(
         "Cheap flow-only answer: buy/sell imbalance by volume and by trade count, "
         "cumulative and window foreign net value in VND, foreign participation "
-        "ratio, and foreign room trend. timeframe options: 1H, 4H, 1D, 3D, 1W, 1M, 1Y (default: 1D)."
+        "ratio, and foreign room trend. Use this for 'are foreigners buying this "
+        "week' style questions instead of a full indicator pass."
     )
 )
 def get_flow_summary(
-    rows: list[dict] | None = None,
+    rows: list[dict] | str | None = None,
     window: int = 5,
     ticker: str | None = None,
     lookback_days: int = 300,
-    timeframe: str = "1D",
+    as_of: str | None = None,
 ) -> dict:
     started = time.perf_counter()
     arguments = {
@@ -321,15 +471,12 @@ def get_flow_summary(
         "window": window,
         "ticker": ticker,
         "lookback_days": lookback_days,
-        "timeframe": timeframe,
+        "as_of": as_of,
     }
     try:
         request = GetFlowSummaryInput(
-            rows=rows,
-            ticker=ticker,
-            lookback_days=lookback_days,
-            window=window,
-            timeframe=timeframe,
+            rows=rows, ticker=ticker, lookback_days=lookback_days, window=window,
+            as_of=as_of,
         )
     except ValidationError as exc:
         error = _validation_error(exc)
@@ -348,8 +495,308 @@ def get_flow_summary(
         raise ToolError(str(exc)) from exc
 
     result["ticker"] = resolved_ticker or _ticker_hint(request)
-    result["timeframe"] = request.timeframe
+    as_of_meta = _as_of_meta(request, resolved)
+    if as_of_meta:
+        result["as_of"] = as_of_meta
     audit("get_flow_summary", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Multi-horizon technical analysis of one ticker, scoped to the question. "
+        "For each requested horizon (ngắn / trung / dài hạn) it returns a verdict, "
+        "a confidence level with its reason, the scored evidence per indicator "
+        "group, conflicting signals and an invalidation level, plus daily "
+        "indicators and support/resistance levels measured from closes.\n"
+        "SET `scope` TO MATCH THE QUESTION — a scoped call is far cheaper:\n"
+        "  scope='full'       phân tích toàn diện / đa khung (all 3 horizons, "
+        "measured levels, 52-week stats)\n"
+        "  scope='short_term' ngắn hạn only (~43% of full)\n"
+        "  scope='mid_term'   trung hạn only\n"
+        "  scope='long_term'  dài hạn only\n"
+        "  scope='levels'     hỗ trợ / kháng cự only (~23% of full)\n"
+        "Sections a scope skips are named in `sections_omitted` and are NOT "
+        "missing data. Loads rows server-side — just pass the ticker."
+    )
+)
+def analyze_multi_horizon(
+    ticker: str,
+    lookback_days: int = 500,
+    scope: str = "full",
+    series_tail: int = 5,
+    weekly_series_tail: int = 5,
+    detail: str = "compact",
+    as_of: str | None = None,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "ticker": ticker,
+        "lookback_days": lookback_days,
+        "scope": scope,
+        "series_tail": series_tail,
+        "weekly_series_tail": weekly_series_tail,
+        "detail": detail,
+        "as_of": as_of,
+    }
+    try:
+        params = AnalyzeMultiHorizonInput(
+            ticker=ticker,
+            lookback_days=lookback_days,
+            scope=scope,
+            series_tail=series_tail,
+            weekly_series_tail=weekly_series_tail,
+            detail=detail,
+            as_of=as_of,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("analyze_multi_horizon", arguments, error=str(error), started=started)
+        raise error from exc
+
+    cache = get_cache()
+    cache_params = {
+        "ticker": params.ticker,
+        "lookback_days": params.lookback_days,
+        "scope": params.scope,
+        "series_tail": params.series_tail,
+        "weekly_series_tail": params.weekly_series_tail,
+        "detail": params.detail,
+        "as_of": params.as_of,
+    }
+    cached = cache.get("analyze_multi_horizon", **cache_params)
+    if cached is not None:
+        audit("analyze_multi_horizon", arguments, result=cached, started=started)
+        return cached
+
+    conn = store.connect()
+    try:
+        if params.as_of:
+            # Only rows up to the requested date, so no indicator sees the future.
+            rows = store.get_range(conn, params.ticker, None, params.as_of)[
+                -params.lookback_days:
+            ]
+        else:
+            rows = store.get_recent(conn, params.ticker, params.lookback_days)
+        if not rows:
+            available = store.list_tickers(conn)
+            if params.as_of and params.ticker in available:
+                earliest, latest = store.date_bounds(conn, params.ticker)
+                result = {
+                    "error": "no_rows_before_as_of",
+                    "ticker": params.ticker,
+                    "as_of": params.as_of,
+                    "stored_range": {"start": earliest, "end": latest},
+                    "message": (
+                        f"Không có phiên giao dịch nào của {params.ticker} vào hoặc "
+                        f"trước {params.as_of}. Dữ liệu chỉ có từ {earliest} đến {latest}."
+                    ),
+                }
+            else:
+                result = {
+                    "error": "unknown_ticker",
+                    "ticker": params.ticker,
+                    "message": f"no stored rows for {params.ticker}",
+                    "available_tickers": available,
+                }
+            audit("analyze_multi_horizon", arguments, result=result, started=started)
+            return result
+    finally:
+        conn.close()
+
+    try:
+        result = multi_horizon_compute(
+            rows,
+            series_tail=params.series_tail,
+            weekly_series_tail=params.weekly_series_tail,
+            include_series=False,
+            detail=params.detail,
+            scope=params.scope,
+        )
+    except EngineError as exc:
+        audit("analyze_multi_horizon", arguments, error=str(exc), started=started)
+        raise ToolError(str(exc)) from exc
+
+    result["ticker"] = params.ticker
+    if params.as_of:
+        effective = rows[-1]["date"]
+        result["as_of"] = {
+            "as_of_requested": params.as_of,
+            "as_of_effective": effective,
+            "is_trading_day": effective == params.as_of,
+            "note": (
+                f"Toàn bộ phân tích được tính TẠI NGÀY {effective}"
+                + ("" if effective == params.as_of
+                   else f" ({params.as_of} không phải phiên giao dịch)")
+                + ", không phải phiên gần nhất hiện tại."
+            ),
+        }
+    cache.put(result, "analyze_multi_horizon", **cache_params)
+    audit("analyze_multi_horizon", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Compute indicators on weekly-aggregated bars. Weekly bars are "
+        "derived from daily data (close = last close of the week, "
+        "volume/value/flow = sum of the week). Use for 'weekly RSI', "
+        "'weekly MACD', 'weekly trend' questions. Groups: "
+        + ", ".join(GROUPS) + "."
+    )
+)
+def compute_weekly_indicators(
+    ticker: str | None = None,
+    lookback_days: int = 500,
+    groups: list[str] | str | None = None,
+    series_tail: int = 26,
+    rows: list[dict] | str | None = None,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "ticker": ticker,
+        "lookback_days": lookback_days,
+        "groups": groups,
+        "series_tail": series_tail,
+        "rows": rows,
+    }
+    try:
+        request = ComputeWeeklyInput(
+            ticker=ticker,
+            lookback_days=lookback_days,
+            groups=groups or list(GROUPS),
+            series_tail=series_tail,
+            rows=rows,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("compute_weekly_indicators", arguments, error=str(error), started=started)
+        raise error from exc
+
+    resolved, resolved_ticker, problem = _load_rows(request)
+    if problem:
+        audit("compute_weekly_indicators", arguments, result=problem, started=started)
+        return problem
+
+    try:
+        from indicators.engine import rows_to_frame, _compute_core
+        frame = rows_to_frame(resolved)
+        weekly_frame = aggregate_weekly(frame)
+
+        _MIN_WEEKLY_BARS = 10
+        if len(weekly_frame) < _MIN_WEEKLY_BARS:
+            result = {
+                "error": "insufficient_weekly_data",
+                "weekly_bars_available": int(len(weekly_frame)),
+                "weekly_bars_min_required": _MIN_WEEKLY_BARS,
+                "message": (
+                    f"Only {len(weekly_frame)} weekly bars available "
+                    f"(need at least {_MIN_WEEKLY_BARS}). "
+                    f"Try increasing lookback_days (current: {request.lookback_days})."
+                ),
+            }
+            audit("compute_weekly_indicators", arguments, result=result, started=started)
+            return result
+
+        wf_clean = weekly_frame.dropna(subset=["prev_close"])
+        result = _compute_core(
+            wf_clean, request.groups, series_tail=request.series_tail,
+        )
+        result["timeframe"] = "weekly"
+        result["weekly_bars_used"] = int(len(wf_clean))
+
+        flags = weekly_quality_flags(weekly_frame)
+        if flags:
+            result["quality_flags"] = flags
+
+    except EngineError as exc:
+        audit("compute_weekly_indicators", arguments, error=str(exc), started=started)
+        raise ToolError(str(exc)) from exc
+
+    result["ticker"] = resolved_ticker or _ticker_hint(request)
+    result["groups_requested"] = list(request.groups)
+    audit("compute_weekly_indicators", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Market breadth summary (advances, declines, unchanged, AD ratio, breadth regime) "
+        "for Vietnamese stock exchanges (VNINDEX, HNX, UPCOM, or ALL)."
+    )
+)
+def get_market_breadth(exchange: str = "VNINDEX") -> dict:
+    started = time.perf_counter()
+    arguments = {"exchange": exchange}
+    try:
+        params = GetMarketBreadthInput(exchange=exchange)
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("get_market_breadth", arguments, error=str(error), started=started)
+        raise error from exc
+
+    conn = store.connect()
+    try:
+        req_ex = None if params.exchange == "ALL" else params.exchange
+        rows = store.get_latest_market_indices(conn, req_ex)
+    finally:
+        conn.close()
+
+    from indicators.market_breadth import market_breadth_summary
+
+    if not rows and params.exchange != "ALL":
+        result = {
+            "exchange": params.exchange,
+            "exchanges": {},
+            "message": f"no stored market index data for {params.exchange}",
+        }
+        audit("get_market_breadth", arguments, result=result, started=started)
+        return result
+
+    result = market_breadth_summary(rows)
+    audit("get_market_breadth", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Head-to-head technical comparison of 2 to 5 stock tickers. "
+        "Produces comparative tables across 52-week performance/drawdowns, moving average alignments, "
+        "momentum indicators (RSI, MACD), support/resistance levels, and relative strength assessment."
+    )
+)
+def compare_tickers(
+    tickers: list[str] | str,
+    lookback_days: int = 250,
+    detail: str = "compact",
+) -> dict:
+    started = time.perf_counter()
+    arguments = {"tickers": tickers, "lookback_days": lookback_days, "detail": detail}
+    try:
+        params = CompareTickersInput(
+            tickers=tickers, lookback_days=lookback_days, detail=detail
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("compare_tickers", arguments, error=str(error), started=started)
+        raise error from exc
+
+    conn = store.connect()
+    try:
+        ticker_data: dict[str, list[dict]] = {}
+        for sym in params.tickers:
+            ticker_data[sym] = store.get_recent(conn, sym, lookback_days=params.lookback_days)
+    finally:
+        conn.close()
+
+    from indicators.comparison import compare_multiple_tickers
+
+    result = compare_multiple_tickers(
+        ticker_data=ticker_data,
+        window_days=params.lookback_days,
+        detail=params.detail,
+    )
+    audit("compare_tickers", arguments, result=result, started=started)
     return result
 
 

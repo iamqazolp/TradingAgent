@@ -72,21 +72,13 @@ prompts 7–9 (ATR, overnight gap, P/E and news) instead of approximating.
 ## 2. The data endpoint
 
 The bundled data is synthetic (see the README). Switching to the live feed is
-as simple as configuring your `.env` file:
+three environment variables and one command:
 
 ```bash
-cp .env.example .env
-```
-
-And filling in the variables in `.env`:
-```ini
-TA_AGENT_API_URL=https://.../GetTradingStatistics
-TA_AGENT_API_TOKEN=your_token_here                                # if it needs a bearer token
-TA_AGENT_API_PARAMS={"symbol":"stockCode","fromDate":"from","toDate":"to"} # only if names differ
-```
-
-Then run ingestion:
-```bash
+export TA_AGENT_API_URL='https://.../GetTradingStatistics'
+export TA_AGENT_API_TOKEN='...'                                   # if it needs a bearer token
+export TA_AGENT_API_PARAMS='{"symbol":"stockCode","fromDate":"from","toDate":"to"}'
+                                                                  # only if the names differ
 uv run python -m data.ingest --ticker VNM --start 2024-01-01 --end 2026-01-22
 ```
 

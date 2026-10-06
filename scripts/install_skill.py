@@ -39,10 +39,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_DIR = REPO_ROOT / "skills" / "technical-analysis"
 MCP_CONFIG = REPO_ROOT / "mcp_config.json"

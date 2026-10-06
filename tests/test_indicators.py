@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -30,11 +29,18 @@ from indicators.foreign_flow import (
     foreign_participation_ratio,
     foreign_room_trend,
 )
-from indicators.momentum import rsi, stochastic
+from indicators.momentum import close_percentile_by_window, rsi
 from indicators.trade_flow import avg_trade_size_by_side, buy_sell_count_imbalance
-from indicators.trend import adx, ema, ema_series, ichimoku, macd, sma
+from indicators.trend import (
+    detect_sma_crossover,
+    ema,
+    ema_series,
+    macd,
+    returns_by_window,
+    sma,
+)
 from indicators.value_flow import avg_trade_value, value_spike
-from indicators.volatility import atr, bollinger, close_to_close_volatility
+from indicators.volatility import bollinger, close_to_close_volatility
 from indicators.volume_flow import buy_sell_volume_imbalance, obv
 from tests.conftest import build_frame, close_series
 
@@ -433,116 +439,71 @@ def test_foreign_room_trend_needs_window_plus_one_rows():
     assert_insufficient(foreign_room_trend(frame, 5), required=6, available=2)
 
 
-# --------------------------------------------------------------------------- Phase 2: ATR, ADX, Stochastic
+# --------------------------------------------------------------------------- addendum indicators
 
 
-def test_atr_hand_calculated():
-    # Closes: 100, 105, 102, 108
-    # Highs:  102, 107, 104, 110
-    # Lows:   98,  103, 100, 105
-    # TRs:    TR1=max(4, 7, 3)=7, TR2=max(4, 1, 5)=5, TR3=max(5, 8, 3)=8
-    # n=2 -> initial ATR at idx 2: (7+5)/2 = 6.0
-    # idx 3: (6.0 * 1 + 8.0)/2 = 7.0
-    frame = build_frame(
-        close=[100.0, 105.0, 102.0, 108.0],
-        high=[102.0, 107.0, 104.0, 110.0],
-        low=[98.0, 103.0, 100.0, 105.0],
-        open=[100.0, 104.0, 103.0, 106.0],
-    )
-    result = atr(frame, 2)
-    assert result["latest_atr"] == pytest.approx(7.0)
-    assert result["suggested_stop_distance"] == pytest.approx(14.0)
-    assert result["latest_atr_pct"] == pytest.approx(7.0 / 108.0 * 100.0)
+def test_returns_by_window_calculates_and_omits_insufficient():
+    # 6 closes: allows 5d return, but omits 20d, 60d, 120d
+    close = pd.Series([10.0, 10.0, 10.0, 10.0, 10.0, 12.5])
+    res = returns_by_window(close, windows=(5, 20, 60, 120))
+    assert res["5d"] == pytest.approx(25.0)
+    assert "20d" not in res
+    assert "60d" not in res
+    assert "120d" not in res
+
+    # If exactly 5 closes, 5d return is also omitted (needs w+1 = 6 closes)
+    res_short = returns_by_window(close.iloc[:5], windows=(5, 20))
+    assert "5d" not in res_short
 
 
-def test_atr_requires_window_plus_one():
-    frame = build_frame(close=[100.0, 105.0])
-    assert_insufficient(atr(frame, 5), required=6)
+def test_detect_sma_crossover_events():
+    # Golden cross: fast crosses above slow
+    dates = pd.date_range("2026-01-01", periods=20)
+    prices = [10.0] * 10 + [20.0 + i for i in range(10)]
+    close = pd.Series(prices, index=dates)
+    res = detect_sma_crossover(close, fast=3, slow=6)
+    assert res["last_event"] == "golden_cross"
+    assert res["date"] == "2026-01-11"
+
+    # Death cross: fast crosses below slow
+    dates_25 = pd.date_range("2026-01-01", periods=25)
+    prices_down = [10.0 + i * 2 for i in range(12)] + [5.0] * 13
+    close_down = pd.Series(prices_down, index=dates_25)
+    res_down = detect_sma_crossover(close_down, fast=3, slow=6)
+    assert res_down["last_event"] == "death_cross"
+    assert res_down["date"] == "2026-01-13"
+
+    # Short history returns last_event: "none"
+    short_close = pd.Series([10.0] * 5, index=dates[:5])
+    assert detect_sma_crossover(short_close, fast=3, slow=6) == {"last_event": "none", "date": None}
+
+    # Positional index without dates raises ValueError
+    pos_close = pd.Series(prices)
+    with pytest.raises(ValueError, match="no `dates` argument was given"):
+        detect_sma_crossover(pos_close, fast=3, slow=6)
+
+    # Positional index with explicit dates works
+    dates_series = pd.Series([d.strftime("%Y-%m-%d") for d in dates])
+    res_explicit = detect_sma_crossover(pos_close, fast=3, slow=6, dates=dates_series)
+    assert res_explicit["last_event"] == "golden_cross"
+    assert res_explicit["date"] == "2026-01-11"
 
 
-def test_adx_hand_calculated():
-    frame = build_frame(
-        close=[10.0, 12.0, 14.0, 13.0, 16.0, 18.0],
-        high=[11.0, 13.0, 15.0, 14.0, 17.0, 19.0],
-        low=[9.0, 11.0, 13.0, 12.0, 15.0, 17.0],
-    )
-    result = adx(frame, 2)
-    assert "adx" in result["latest"]
-    assert result["latest"]["adx"] > 0
-    assert result["directional_bias"] == "bullish"
-    assert result["trend_strength"] in ("trending", "very_strong_trend", "emerging_trend")
+def test_close_percentile_by_window_multi():
+    # 25 closes: 20d window present, 60d and 126d omitted
+    prices = [10.0 + i for i in range(25)]
+    close = pd.Series(prices)
+    res = close_percentile_by_window(close, windows=(20, 60, 126))
+    assert "20d" in res
+    assert "60d" not in res
+    assert "126d" not in res
+    # Last 20 are 15..34. min=15, max=34, cur=34 -> pct=1.0
+    assert res["20d"]["value"] == pytest.approx(1.0)
+    assert res["20d"]["range_high"] == pytest.approx(34.0)
+    assert res["20d"]["range_low"] == pytest.approx(15.0)
 
-
-def test_adx_requires_double_window():
-    frame = build_frame(close=[10.0, 12.0, 13.0])
-    assert_insufficient(adx(frame, 2), required=4)
-
-
-def test_adx_flat_halted_period_no_nan_cascade():
-    # 10 bars with flat trading (high=low=close=10.0) followed by trending bars
-    frame = build_frame(
-        close=[10.0] * 5 + [11.0, 12.0, 13.0, 14.0, 15.0],
-        high=[10.0] * 5 + [11.5, 12.5, 13.5, 14.5, 15.5],
-        low=[10.0] * 5 + [10.5, 11.5, 12.5, 13.5, 14.5],
-    )
-    result = adx(frame, 3)
-    assert result["latest"]["adx"] is not None
-    assert not np.isnan(result["latest"]["adx"])
-    assert result["latest"]["plus_di"] is not None
-    assert result["latest"]["minus_di"] is not None
-
-
-def test_stochastic_hand_calculated():
-    # k=3, d=2, slowing=1
-    frame = build_frame(
-        high=[10.0, 12.0, 14.0, 16.0, 15.0],
-        low=[8.0, 9.0, 10.0, 12.0, 11.0],
-        close=[9.0, 11.0, 13.0, 15.0, 12.0],
-    )
-    result = stochastic(frame, k_window=3, d_window=2, slowing=1)
-    assert result["latest"]["k"] == pytest.approx(33.333333333333336)
-    assert result["latest"]["d"] == pytest.approx(59.523809523809526)
-    assert result["zone"] == "neutral"
-
-
-def test_stochastic_crossover_and_zones():
-    # Bullish cross into overbought
-    frame = build_frame(
-        high=[10.0, 12.0, 14.0, 16.0, 20.0],
-        low=[8.0, 9.0, 10.0, 11.0, 18.0],
-        close=[9.0, 10.0, 11.0, 15.0, 20.0],
-    )
-    result = stochastic(frame, k_window=3, d_window=2, slowing=1)
-    assert result["zone"] == "overbought"
-
-
-def test_ichimoku_hand_calculated():
-    # 6 bars: tenkan=3, kijun=4, senkou_b=5
-    # Row 5 (last bar):
-    # past 3 highs: [18, 20, 22] -> max 22, lows: [14, 16, 18] -> min 14 => Tenkan = (22+14)/2 = 18.0
-    # past 4 highs: [16, 18, 20, 22] -> max 22, lows: [12, 14, 16, 18] -> min 12 => Kijun = (22+12)/2 = 17.0
-    # Span A = (18+17)/2 = 17.5
-    # past 5 highs: [14, 16, 18, 20, 22] -> max 22, lows: [10, 12, 14, 16, 18] -> min 10 => Span B = (22+10)/2 = 16.0
-    # Close = 20.0
-    frame = build_frame(
-        high=[12.0, 14.0, 16.0, 18.0, 20.0, 22.0],
-        low=[8.0, 10.0, 12.0, 14.0, 16.0, 18.0],
-        close=[10.0, 12.0, 14.0, 16.0, 18.0, 20.0],
-    )
-    result = ichimoku(frame, tenkan_n=3, kijun_n=4, senkou_b_n=5)
-    assert result["latest"]["tenkan_sen"] == pytest.approx(18.0)
-    assert result["latest"]["kijun_sen"] == pytest.approx(17.0)
-    assert result["latest"]["senkou_span_a"] == pytest.approx(17.5)
-    assert result["latest"]["senkou_span_b"] == pytest.approx(16.0)
-    assert result["latest"]["chikou_span"] == pytest.approx(20.0)
-    assert result["kumo_sentiment"] == "bullish"
-    assert result["price_vs_cloud"] == "above_cloud"
-    assert result["cloud_thickness"] == pytest.approx(1.5)
-    assert result["cloud_thickness_pct"] == pytest.approx(1.5 / 20.0 * 100.0)
-
-
-def test_ichimoku_requires_senkou_b_window():
-    frame = build_frame(close=[10.0] * 10)
-    assert_insufficient(ichimoku(frame, 9, 26, 52), required=52)
-
+    # Flat window returns 0.5
+    flat = pd.Series([15.0] * 25)
+    res_flat = close_percentile_by_window(flat, windows=(20,))
+    assert res_flat["20d"]["value"] == pytest.approx(0.5)
 

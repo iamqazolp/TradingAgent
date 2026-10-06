@@ -53,18 +53,10 @@ def load_fixture(path: Path = FIXTURE) -> dict[str, list[dict]]:
     records = payload["Data"] if isinstance(payload, dict) else payload
     by_ticker: dict[str, list[dict]] = {}
     for raw in records:
-        close_val = _num(raw["PriceClose"])
-        prev_val = _num(raw["PricePreviousClose"])
-        open_val = _num(raw.get("PriceOpen") or raw.get("Open")) or prev_val
-        high_val = _num(raw.get("PriceHigh") or raw.get("High")) or max(close_val, open_val, prev_val)
-        low_val = _num(raw.get("PriceLow") or raw.get("Low")) or min(close_val, open_val, prev_val)
         row = {
             "date": datetime.strptime(raw["Date"], "%d/%m/%Y").strftime("%Y-%m-%d"),
-            "prev_close": prev_val,
-            "open": open_val,
-            "high": high_val,
-            "low": low_val,
-            "close": close_val,
+            "prev_close": _num(raw["PricePreviousClose"]),
+            "close": _num(raw["PriceClose"]),
             "total_trade": _num(raw["TotalTrade"]),
             "total_value": _num(raw["TotalValue"]),
             "total_volume": _num(raw["TotalVolume"]),
@@ -220,130 +212,6 @@ def per_row_div(numerators: list[float], denominators: list[float]) -> list[floa
     return [None if d == 0 else n / d for n, d in zip(numerators, denominators)]
 
 
-def atr_truth(rows: list[dict], n: int = 14) -> float | None:
-    """Wilder ATR implemented in stdlib."""
-    if len(rows) < n + 1:
-        return None
-    tr = []
-    for i in range(len(rows)):
-        h = rows[i]["high"]
-        l = rows[i]["low"]
-        pc = rows[i - 1]["close"] if i > 0 else rows[0]["prev_close"]
-        tr.append(max(h - l, abs(h - pc), abs(l - pc)))
-    prev = sum(tr[1 : n + 1]) / n
-    for i in range(n + 1, len(rows)):
-        prev = (prev * (n - 1) + tr[i]) / n
-    return prev
-
-
-def adx_truth(rows: list[dict], n: int = 14) -> dict:
-    """Wilder ADX / DMI implemented in stdlib."""
-    if len(rows) < 2 * n:
-        return {"adx": None, "plus_di": None, "minus_di": None}
-    plus_dm, minus_dm, tr = [0.0], [0.0], [0.0]
-    for i in range(1, len(rows)):
-        up = rows[i]["high"] - rows[i - 1]["high"]
-        down = rows[i - 1]["low"] - rows[i]["low"]
-        plus_dm.append(up if up > down and up > 0 else 0.0)
-        minus_dm.append(down if down > up and down > 0 else 0.0)
-        h = rows[i]["high"]
-        l = rows[i]["low"]
-        pc = rows[i - 1]["close"]
-        tr.append(max(h - l, abs(h - pc), abs(l - pc)))
-
-    s_tr = sum(tr[1 : n + 1]) / n
-    s_pdm = sum(plus_dm[1 : n + 1]) / n
-    s_mdm = sum(minus_dm[1 : n + 1]) / n
-
-    p_di = 100.0 * (s_pdm / s_tr) if s_tr else 0.0
-    m_di = 100.0 * (s_mdm / s_tr) if s_tr else 0.0
-    dx_list = [100.0 * abs(p_di - m_di) / (p_di + m_di) if p_di + m_di else 0.0]
-
-    for i in range(n + 1, len(rows)):
-        s_tr = (s_tr * (n - 1) + tr[i]) / n
-        s_pdm = (s_pdm * (n - 1) + plus_dm[i]) / n
-        s_mdm = (s_mdm * (n - 1) + minus_dm[i]) / n
-        p_di = 100.0 * (s_pdm / s_tr) if s_tr else 0.0
-        m_di = 100.0 * (s_mdm / s_tr) if s_tr else 0.0
-        dx = 100.0 * abs(p_di - m_di) / (p_di + m_di) if p_di + m_di else 0.0
-        dx_list.append(dx)
-
-    if len(dx_list) < n:
-        return {"adx": None, "plus_di": p_di, "minus_di": m_di}
-
-    adx_val = sum(dx_list[:n]) / n
-    for i in range(n, len(dx_list)):
-        adx_val = (adx_val * (n - 1) + dx_list[i]) / n
-
-    return {"adx": adx_val, "plus_di": p_di, "minus_di": m_di}
-
-
-def stoch_truth(rows: list[dict], k_window: int = 14, d_window: int = 3, slowing: int = 3) -> dict:
-    """Stochastic Oscillator (%K, %D) in stdlib."""
-    if len(rows) < k_window + slowing + d_window - 2:
-        return {"k": None, "d": None}
-    fast_k = []
-    for i in range(k_window - 1, len(rows)):
-        window = rows[i - k_window + 1 : i + 1]
-        ll = min(r["low"] for r in window)
-        hh = max(r["high"] for r in window)
-        c = rows[i]["close"]
-        fk = 50.0 if hh == ll else 100.0 * (c - ll) / (hh - ll)
-        fast_k.append(fk)
-
-    k_series = []
-    if slowing > 1:
-        for i in range(slowing - 1, len(fast_k)):
-            k_series.append(sum(fast_k[i - slowing + 1 : i + 1]) / slowing)
-    else:
-        k_series = fast_k
-
-    d_series = []
-    for i in range(d_window - 1, len(k_series)):
-        d_series.append(sum(k_series[i - d_window + 1 : i + 1]) / d_window)
-
-    return {
-        "k": k_series[-1] if k_series else None,
-        "d": d_series[-1] if d_series else None,
-    }
-
-
-def ichimoku_truth(rows: list[dict], tenkan_n: int = 9, kijun_n: int = 26, senkou_b_n: int = 52) -> dict:
-    """Ichimoku Kinko Hyo components in stdlib."""
-    if len(rows) < senkou_b_n:
-        return {
-            "tenkan_sen": None,
-            "kijun_sen": None,
-            "senkou_span_a": None,
-            "senkou_span_b": None,
-            "chikou_span": None,
-        }
-    tenkan_window = rows[-tenkan_n:]
-    t_h = max(r["high"] for r in tenkan_window)
-    t_l = min(r["low"] for r in tenkan_window)
-    tenkan = (t_h + t_l) / 2.0
-
-    kijun_window = rows[-kijun_n:]
-    k_h = max(r["high"] for r in kijun_window)
-    k_l = min(r["low"] for r in kijun_window)
-    kijun = (k_h + k_l) / 2.0
-
-    span_a = (tenkan + kijun) / 2.0
-
-    senkou_b_window = rows[-senkou_b_n:]
-    sb_h = max(r["high"] for r in senkou_b_window)
-    sb_l = min(r["low"] for r in senkou_b_window)
-    span_b = (sb_h + sb_l) / 2.0
-
-    return {
-        "tenkan_sen": tenkan,
-        "kijun_sen": kijun,
-        "senkou_span_a": span_a,
-        "senkou_span_b": span_b,
-        "chikou_span": rows[-1]["close"],
-    }
-
-
 # --------------------------------------------------------------------------- assembly
 
 
@@ -390,10 +258,6 @@ def ticker_truth(rows: list[dict], window: int = 5) -> dict:
         "rsi_14": rsi(close, 14),
         "bollinger_20_2": bollinger(close, 20, 2.0),
         "close_to_close_volatility_20": close_to_close_volatility(close, 20),
-        "atr_14": atr_truth(rows, 14),
-        "adx_14": adx_truth(rows, 14),
-        "stoch_14_3": stoch_truth(rows, 14, 3, 3),
-        "ichimoku": ichimoku_truth(rows, 9, 26, 52),
         "buy_sell_volume_imbalance": volume_imbalance[-1],
         "buy_sell_volume_imbalance_avg_5": mean_of_last(volume_imbalance, window),
         "buy_sell_count_imbalance": count_imbalance[-1],

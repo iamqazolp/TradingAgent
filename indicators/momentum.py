@@ -1,4 +1,4 @@
-"""Group B: momentum. Wilder RSI and Stochastic Oscillator (%K, %D)."""
+"""Group B: momentum. Wilder RSI, z-score of returns, close percentile, streaks."""
 
 from __future__ import annotations
 
@@ -44,69 +44,8 @@ def rsi(close: pd.Series, n: int = 14) -> dict:
     return {
         "window": n,
         "latest": value,
-        "zone": _rsi_zone(value),
+        "zone": _zone(value),
         "series": series,
-    }
-
-
-def stochastic(
-    data: pd.DataFrame | pd.Series,
-    k_window: int = 14,
-    d_window: int = 3,
-    slowing: int = 3,
-) -> dict:
-    """Classic Stochastic Oscillator (%K, %D).
-
-    %K = 100 * (Close - Lowest Low) / (Highest High - Lowest Low) smoothed by `slowing` SMA.
-    %D = `d_window` SMA of %K.
-    """
-    required = k_window + slowing + d_window - 2
-    if isinstance(data, pd.Series):
-        return insufficient("stochastic requires high, low, and close columns (DataFrame)", required)
-
-    marker = require(data.index.to_series(), required, f"stochastic({k_window},{d_window},{slowing})")
-    if marker:
-        return marker
-
-    high = pd.to_numeric(data["high"], errors="coerce").astype("float64")
-    low = pd.to_numeric(data["low"], errors="coerce").astype("float64")
-    close = pd.to_numeric(data["close"], errors="coerce").astype("float64")
-
-    lowest_low = low.rolling(k_window, min_periods=k_window).min()
-    highest_high = high.rolling(k_window, min_periods=k_window).max()
-    denom = highest_high - lowest_low
-
-    fast_k = 100.0 * (close - lowest_low) / denom.where(denom != 0, other=np.nan)
-    fast_k = fast_k.fillna(50.0)
-
-    if slowing > 1:
-        k_series = fast_k.rolling(slowing, min_periods=slowing).mean().rename(f"stoch_k_{k_window}")
-    else:
-        k_series = fast_k.rename(f"stoch_k_{k_window}")
-
-    d_series = k_series.rolling(d_window, min_periods=d_window).mean().rename(f"stoch_d_{d_window}")
-
-    k_now = latest(k_series)
-    d_now = latest(d_series)
-    k_prev = finite(k_series.iloc[-2]) if len(k_series) > 1 else None
-    d_prev = finite(d_series.iloc[-2]) if len(d_series) > 1 else None
-
-    if k_now is None or d_now is None:
-        return insufficient(
-            f"stochastic({k_window},{d_window},{slowing}) has no value on the latest row",
-            required,
-            int(len(data)),
-        )
-
-    return {
-        "k_window": k_window,
-        "d_window": d_window,
-        "slowing": slowing,
-        "latest": {"k": k_now, "d": d_now},
-        "zone": _stoch_zone(k_now),
-        "crossover": _stoch_crossover(k_prev, d_prev, k_now, d_now),
-        "k_series": k_series,
-        "d_series": d_series,
     }
 
 
@@ -118,7 +57,7 @@ def _rsi_value(avg_gain: float, avg_loss: float) -> float:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _rsi_zone(value: float) -> str:
+def _zone(value: float) -> str:
     if value >= 70:
         return "overbought"
     if value <= 30:
@@ -126,33 +65,257 @@ def _rsi_zone(value: float) -> str:
     return "neutral"
 
 
-def _stoch_zone(value: float) -> str:
-    if value >= 80:
-        return "overbought"
-    if value <= 20:
-        return "oversold"
-    return "neutral"
+def z_score(close: pd.Series, n: int = 20) -> dict:
+    """Z-score of the latest daily return relative to the past `n` returns.
+
+    Z > 2 or Z < -2 signals statistically extreme moves. Useful for detecting
+    mean-reversion setups. Positive = unusually strong up day, negative = down.
+    """
+    required = n + 2  # need n+1 returns, which needs n+2 closes
+    marker = require(close, required, f"z_score({n})")
+    if marker:
+        return marker
+    values = pd.to_numeric(close, errors="coerce").astype("float64")
+    returns = values.pct_change().dropna()
+    if len(returns) < n:
+        return insufficient(f"z_score({n}) needs {n} returns", n, len(returns))
+    window_returns = returns.iloc[-n:]
+    mean_r = float(window_returns.mean())
+    std_r = float(window_returns.std(ddof=1))
+    current_r = float(returns.iloc[-1])
+    if std_r == 0 or np.isnan(std_r):
+        z = 0.0
+    else:
+        z = (current_r - mean_r) / std_r
+    flag = "normal"
+    if z >= 2.0:
+        flag = "extreme_high"
+    elif z <= -2.0:
+        flag = "extreme_low"
+    elif z >= 1.5:
+        flag = "elevated"
+    elif z <= -1.5:
+        flag = "depressed"
+    return {
+        "window": n,
+        "latest": round(z, 2),
+        "flag": flag,
+        "daily_return_pct": round(current_r * 100, 2),
+    }
 
 
-def _stoch_crossover(k_prev: float | None, d_prev: float | None, k_now: float, d_now: float) -> str:
-    if k_prev is None or d_prev is None:
-        return "unknown"
-    if k_prev <= d_prev and k_now > d_now:
-        return "bullish_cross"
-    if k_prev >= d_prev and k_now < d_now:
-        return "bearish_cross"
-    return "none"
+def close_percentile(close: pd.Series, n: int = 20) -> dict:
+    """Where today's close sits within the last `n` closes (0=at low, 1=at high).
+
+    Close-only replacement for Stochastic %K. Values near 0 suggest oversold
+    conditions; near 1 suggest overbought. Unlike Stochastic, uses close only
+    so no high/low needed.
+    """
+    marker = require(close, n, f"close_percentile({n})")
+    if marker:
+        return marker
+    values = pd.to_numeric(close, errors="coerce").astype("float64")
+    window = values.iloc[-n:]
+    hi = float(window.max())
+    lo = float(window.min())
+    cur = float(values.iloc[-1])
+    if hi == lo:
+        pct = 0.5
+    else:
+        pct = (cur - lo) / (hi - lo)
+    zone = "middle"
+    if pct >= 0.8:
+        zone = "near_high"
+    elif pct <= 0.2:
+        zone = "near_low"
+    return {
+        "window": n,
+        "latest": round(pct, 3),
+        "zone": zone,
+        "range_high": hi,
+        "range_low": lo,
+    }
 
 
-def momentum_group(data: pd.DataFrame | pd.Series, params: dict | None = None) -> dict:
+def return_streak(close: pd.Series) -> dict:
+    """Count of consecutive up or down close-to-close days at the tail.
+
+    Positive = up streak, negative = down streak. In Vietnamese markets,
+    streaks of 5+ days are statistically significant.
+    """
+    marker = require(close, 2, "return_streak")
+    if marker:
+        return marker
+    values = pd.to_numeric(close, errors="coerce").astype("float64").to_numpy()
+    if len(values) < 2:
+        return {"streak": 0, "direction": "none"}
+    diffs = np.diff(values)
+    streak = 0
+    direction = "flat"
+    if diffs[-1] > 0:
+        direction = "up"
+        for d in reversed(diffs):
+            if d > 0:
+                streak += 1
+            else:
+                break
+    elif diffs[-1] < 0:
+        direction = "down"
+        for d in reversed(diffs):
+            if d < 0:
+                streak += 1
+            else:
+                break
+    flag = "normal"
+    if streak >= 5:
+        flag = "extended"
+    elif streak >= 3:
+        flag = "notable"
+    return {
+        "streak": streak if direction == "up" else -streak,
+        "direction": direction,
+        "flag": flag,
+    }
+
+
+def close_percentile_by_window(close: pd.Series, windows=(20, 60, 126)) -> dict:
+    """Extends the existing single-window close_percentile to several windows.
+    Percentile is close-based (highest/lowest CLOSE in the window), explicitly
+    not a true high/low range, must be labeled as such wherever surfaced."""
+    out = {}
+    n = len(close)
+    for w in windows:
+        key = f"{w}d"
+        if n < w:
+            continue  # insufficient_data, omit the key
+        window = close.iloc[-w:]
+        lo, hi = window.min(), window.max()
+        latest = close.iloc[-1]
+        if hi == lo:
+            pct = 0.5  # flat window, avoid divide by zero, midpoint is the honest answer
+        else:
+            pct = (latest - lo) / (hi - lo)
+        out[key] = {
+            "value": round(float(pct), 3),
+            "range_high": round(float(hi), 2),
+            "range_low": round(float(lo), 2),
+        }
+    return out
+
+
+def stochastic(
+    high: pd.Series,
+    low: pd.Series,
+    close: pd.Series,
+    k_window: int = 14,
+    d_window: int = 3,
+) -> dict:
+    """Stochastic Oscillator (%K, %D).
+
+    %K = (Close - LowestLow(k)) / (HighestHigh(k) - LowestLow(k)) * 100
+    %D = SMA(%K, d)
+    """
+    required = k_window + d_window - 1
+    marker = require(close, required, f"stochastic({k_window},{d_window})")
+    if marker:
+        return marker
+
+    h = pd.to_numeric(high, errors="coerce").astype("float64")
+    l = pd.to_numeric(low, errors="coerce").astype("float64")
+    c = pd.to_numeric(close, errors="coerce").astype("float64")
+
+    if h.dropna().empty or l.dropna().empty:
+        return insufficient(
+            f"stochastic({k_window},{d_window}) requires valid high and low prices",
+            required,
+            int(len(close)),
+        )
+
+    lowest_low = l.rolling(k_window).min()
+    highest_high = h.rolling(k_window).max()
+    rng = highest_high - lowest_low
+
+    # When rng == 0 (flat window), %K is 50.0
+    pct_k = ((c - lowest_low) / rng.where(rng != 0, np.nan)) * 100.0
+    pct_k = pct_k.fillna(50.0).where(lowest_low.notna() & highest_high.notna(), np.nan)
+    pct_k.name = f"stochastic_k_{k_window}"
+
+    pct_d = pct_k.rolling(d_window).mean()
+    pct_d.name = f"stochastic_d_{d_window}"
+
+    k_now = latest(pct_k)
+    d_now = latest(pct_d)
+
+    if k_now is None or d_now is None:
+        return insufficient(
+            f"stochastic({k_window},{d_window}) has no value on the latest row",
+            required,
+            int(len(close)),
+        )
+
+    if k_now > 80:
+        condition = "overbought"
+    elif k_now < 20:
+        condition = "oversold"
+    else:
+        condition = "neutral"
+
+    crossover = None
+    if len(pct_k) >= 2 and len(pct_d) >= 2:
+        k_prev = finite(pct_k.iloc[-2])
+        d_prev = finite(pct_d.iloc[-2])
+        if k_prev is not None and d_prev is not None:
+            if k_prev <= d_prev and k_now > d_now:
+                crossover = "bullish_crossover"
+            elif k_prev >= d_prev and k_now < d_now:
+                crossover = "bearish_crossover"
+
+    return {
+        "k_window": k_window,
+        "d_window": d_window,
+        "latest": {
+            "k": round(k_now, 2),
+            "d": round(d_now, 2),
+        },
+        "k": round(k_now, 2),
+        "d": round(d_now, 2),
+        "condition": condition,
+        "crossover": crossover,
+        "k_series": pct_k,
+        "d_series": pct_d,
+    }
+
+
+def momentum_group(close: pd.Series, params: dict | None = None) -> dict:
     """Every Group B indicator, keyed by name."""
     params = params or {}
-    close = data["close"] if isinstance(data, pd.DataFrame) else data
     n = params.get("rsi_window", 14)
-    out = {f"rsi_{n}": rsi(close, n)}
-    if isinstance(data, pd.DataFrame) and "high" in data.columns and "low" in data.columns:
-        k_w = params.get("stoch_k", 14)
-        d_w = params.get("stoch_d", 3)
-        slowing = params.get("stoch_slowing", 3)
-        out[f"stoch_{k_w}_{d_w}"] = stochastic(data, k_w, d_w, slowing)
+    z_window = params.get("z_score_window", 20)
+    pct_window = params.get("percentile_window", 20)
+    pct_windows = params.get("percentile_windows", (20, 60, 126))
+    by_window = close_percentile_by_window(close, pct_windows)
+
+    out = {
+        f"rsi_{n}": rsi(close, n),
+        f"z_score_{z_window}": z_score(close, z_window),
+        f"close_percentile_{pct_window}": close_percentile(close, pct_window),
+        "close_percentile_by_window": by_window,
+        "close_percentiles": by_window,
+        "return_streak": return_streak(close),
+    }
+
+    high = params.get("high")
+    low = params.get("low")
+    if isinstance(high, pd.Series) and isinstance(low, pd.Series):
+        h_num = pd.to_numeric(high, errors="coerce")
+        l_num = pd.to_numeric(low, errors="coerce")
+        if h_num.notna().any() and l_num.notna().any():
+            k_win = params.get("stochastic_k_window", 14)
+            d_win = params.get("stochastic_d_window", 3)
+            stoch_res = stochastic(high, low, close, k_window=k_win, d_window=d_win)
+            out["stochastic"] = stoch_res
+            out[f"stochastic_{k_win}_{d_win}"] = stoch_res
+
     return out
+
+

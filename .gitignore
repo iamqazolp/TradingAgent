@@ -6,11 +6,5 @@ __pycache__/
 var/
 logs/
 .pytest_cache/
-# Environment and secrets
-.env
-.env.*
-!.env.example
-*.env
-
 # Session state that `oh` writes into the working directory.
 .openharness/

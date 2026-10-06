@@ -73,8 +73,6 @@ pyjwt==2.13.0
     # via mcp
 python-dateutil==2.9.0.post0
     # via pandas
-python-dotenv==1.2.3
-    # via ta-agent
 python-multipart==0.0.32
     # via mcp
 pytz==2026.3.post1 ; python_full_version < '3.11'

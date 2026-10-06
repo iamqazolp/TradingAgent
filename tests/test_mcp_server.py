@@ -73,11 +73,15 @@ def audit_entries(tmp_path: Path) -> list[dict]:
 # --------------------------------------------------------------------------- surface
 
 
-def test_the_server_exposes_exactly_three_tools():
+def test_the_server_exposes_expected_tools():
     tools = asyncio.run(server.list_tools())
     assert sorted(t.name for t in tools) == [
+        "analyze_multi_horizon",
+        "compare_tickers",
         "compute_indicators",
+        "compute_weekly_indicators",
         "get_flow_summary",
+        "get_market_breadth",
         "get_price_data",
     ]
     for tool in tools:
@@ -178,6 +182,10 @@ def test_compute_indicators_with_inline_rows_matches_the_stored_result():
 
 
 def test_series_tail_controls_the_payload_size():
+    default_tail = call(
+        "compute_indicators", {"ticker": TICKER, "groups": ["trend"]}
+    )
+    assert len(default_tail["groups"]["trend"]["sma_20"]["series"]["values"]) == 20
     trimmed = call(
         "compute_indicators", {"ticker": TICKER, "groups": ["trend"], "series_tail": 2}
     )
@@ -310,42 +318,41 @@ def test_an_unwritable_audit_log_does_not_break_a_working_call(monkeypatch):
     assert call("get_price_data", {"ticker": TICKER, "lookback_days": 2})["row_count"] == 2
 
 
-# --------------------------------------------------------------------------- Timeframe & OHLC Tools
+def test_compare_tickers_tool(isolated_env):
+    conn = store.connect(isolated_env / "ta.sqlite")
+    try:
+        rows_other = build_rows(
+            ticker="OTH",
+            close=[20_000.0 - 50 * i for i in range(40)],
+            total_volume=[2_000] * 40,
+        )
+        store.upsert_rows(conn, rows_other)
+    finally:
+        conn.close()
+
+    payload = call("compare_tickers", {"tickers": [TICKER, "OTH"], "lookback_days": 30})
+    assert payload["tickers_compared"] == [TICKER, "OTH"]
+    assert "table_52w" in payload
+    assert len(payload["table_52w"]) == 2
+    assert "table_ma" in payload
+    assert len(payload["table_ma"]) == 2
+    assert "table_levels" in payload
+    assert len(payload["table_levels"]) == 2
+    assert "relative_assessment" in payload
+    assert payload["relative_assessment"]["tickers_assessed"] == [TICKER, "OTH"]
+
+    # Verify audit entry
+    entries = audit_entries(isolated_env)
+    assert entries[-1]["tool"] == "compare_tickers"
+    assert entries[-1]["result"]["tickers_compared"] == [TICKER, "OTH"]
 
 
-def test_get_price_data_with_weekly_timeframe():
-    payload = call("get_price_data", {"ticker": TICKER, "lookback_days": 4, "timeframe": "1W"})
-    assert payload["timeframe"] == "1W"
-    assert payload["row_count"] == 4
-    for row in payload["rows"]:
-        assert "open" in row and "high" in row and "low" in row and "close" in row
+def test_compare_tickers_validation():
+    with pytest.raises(ToolError, match="at least 2 tickers"):
+        asyncio.run(server.call_tool("compare_tickers", {"tickers": [TICKER]}))
 
-
-def test_compute_indicators_with_timeframe_and_unlocked_indicators():
-    payload = call("compute_indicators", {"ticker": TICKER, "lookback_days": 30, "timeframe": "1D"})
-    assert payload["timeframe"] == "1D"
-    groups = payload["groups"]
-    assert "trend" in groups and "momentum" in groups and "volatility" in groups
-    # Unlocked indicators are present
-    assert "atr_14" in groups["volatility"]
-    assert "adx_14" in groups["trend"]
-    assert "stoch_14_3" in groups["momentum"]
-    assert groups["volatility"]["atr_14"]["latest_atr"] is not None
-
-
-def test_get_flow_summary_with_timeframe():
-    payload = call("get_flow_summary", {"ticker": TICKER, "window": 2, "timeframe": "1W"})
-    assert payload["timeframe"] == "1W"
-    assert "buy_sell_volume_imbalance_avg" in payload
-
-
-def test_invalid_timeframe_is_rejected_by_mcp_tools():
-    for tool_name, args in (
-        ("get_price_data", {"ticker": TICKER, "timeframe": "15m"}),
-        ("compute_indicators", {"ticker": TICKER, "timeframe": "invalid_tf"}),
-        ("get_flow_summary", {"ticker": TICKER, "timeframe": "2W"}),
-    ):
-        with pytest.raises(ToolError, match="unsupported timeframe"):
-            asyncio.run(server.call_tool(tool_name, args))
-
+    with pytest.raises(ToolError, match="maximum of 5 tickers"):
+        asyncio.run(
+            server.call_tool("compare_tickers", {"tickers": ["A", "B", "C", "D", "E", "F"]})
+        )
 
