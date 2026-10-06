@@ -464,7 +464,7 @@ class ScreenAndRankInput(BaseModel):
 
     universe: list[str] | str = Field(
         default="vn30",
-        description="Ticker list (e.g. ['HPG', 'VNM'] or 'HPG,VNM') or 'vn30' for standard VN30 universe.",
+        description="Ticker list (e.g. ['HPG', 'VNM']) or 'vn30'. For market/VN30 scanning, leave as default 'vn30'; DO NOT expand into 30 ticker strings.",
     )
     strategy: Literal[
         "momentum_breakout",
@@ -489,7 +489,7 @@ class ScanForeignFlowInput(BaseModel):
 
     universe: list[str] | str = Field(
         default="vn30",
-        description="Ticker list (e.g. ['HPG', 'VNM'] or 'HPG,VNM') or 'vn30' for standard VN30 universe.",
+        description="Ticker list (e.g. ['HPG', 'VNM']) or 'vn30'. For market/VN30 scanning, leave as default 'vn30'; DO NOT expand into 30 ticker strings.",
     )
     window_days: int = Field(
         default=5,

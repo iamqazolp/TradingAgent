@@ -155,3 +155,50 @@ def test_scan_foreign_flow_logic():
 
     assert len(result["room_warnings"]) >= 1
     assert any(w["symbol"] == "EXH" for w in result["room_warnings"])
+
+
+def test_candidate_details_and_single_shot_payload():
+    closes = [20_000.0 + 100.0 * i for i in range(25)]
+    rows = build_rows(
+        ticker="HPG",
+        close=closes,
+        total_volume=[1_000_000] * 25,
+        total_value=[20_000_000_000.0] * 25,
+        buy_volume=[600_000] * 25,
+        sell_volume=[400_000] * 25,
+        foreign_buy_value=[5_000_000_000.0] * 25,
+        foreign_sell_value=[2_000_000_000.0] * 25,
+        foreign_room=[50_000_000] * 25,
+    )
+    result = screen_and_rank({"HPG": rows}, strategy="momentum_breakout", top_n=1)
+
+    assert "single_shot_notice" in result
+    assert "Không cần gọi thêm analyze_multi_horizon" in result["single_shot_notice"]
+    assert result["top_candidate_details"] is not None
+
+    top = result["top_candidate_details"]
+    assert top["symbol"] == "HPG"
+    assert top["price"] == closes[-1]
+    assert top["matched_volume"] == 1_000_000
+    assert top["buy_volume"] == 600_000
+    assert top["sell_volume"] == 400_000
+    assert top["buy_sell_imbalance"] == 0.2
+    assert top["foreign_buy_value"] == 5_000_000_000.0
+    assert top["foreign_sell_value"] == 2_000_000_000.0
+    assert top["foreign_net_value"] == 3_000_000_000.0
+    assert top["foreign_net_value_5d"] == 15_000_000_000.0
+    assert top["foreign_room"] == 50_000_000
+
+    min_20 = min(closes[-20:])
+    max_20 = max(closes[-20:])
+    assert top["support_level"] == min_20
+    assert top["resistance_level"] == max_20
+    assert top["distance_to_support_pct"] >= 0.0
+    assert top["distance_to_resistance_pct"] == 0.0
+    assert top["volatility_annualized_pct"] > 0
+    assert top["suggested_stop_distance_pct"] > 0
+
+    cand = result["ranked_candidates"][0]
+    assert "details" in cand
+    assert cand["details"]["matched_volume"] == 1_000_000
+

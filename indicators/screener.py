@@ -412,6 +412,109 @@ def _score_intraday_breakout(frame: pd.DataFrame) -> tuple[float, list[str], dic
     return composite_score, key_signals, highlights
 
 
+def _extract_candidate_flow_and_levels(rows: list[dict]) -> dict[str, Any]:
+    """Extract deep flow metrics, active buy/sell volume, and support/resistance levels.
+
+    Enables single-shot response in screen_and_rank without requiring follow-up
+    calls to analyze_multi_horizon or get_flow_summary.
+    """
+    if not rows:
+        return {
+            "matched_volume": 0.0,
+            "matched_value": 0.0,
+            "buy_volume": 0.0,
+            "sell_volume": 0.0,
+            "buy_sell_imbalance": 0.0,
+            "foreign_buy_value": 0.0,
+            "foreign_sell_value": 0.0,
+            "foreign_net_value": 0.0,
+            "foreign_net_value_5d": 0.0,
+            "foreign_room": 0,
+            "support_level": 0.0,
+            "resistance_level": 0.0,
+            "distance_to_support_pct": 0.0,
+            "distance_to_resistance_pct": 0.0,
+            "volatility_annualized_pct": 25.0,
+            "suggested_stop_distance_pct": 3.12,
+        }
+
+    last = rows[-1]
+    matched_volume = float(last.get("total_volume", last.get("volume", 0)) or 0)
+    matched_value = float(last.get("total_value", last.get("value", 0.0)) or 0.0)
+    buy_volume = float(last.get("buy_volume", 0) or 0)
+    sell_volume = float(last.get("sell_volume", 0) or 0)
+
+    total_bs = buy_volume + sell_volume
+    buy_sell_imbalance = round((buy_volume - sell_volume) / total_bs, 3) if total_bs > 0 else 0.0
+
+    foreign_buy_value = float(last.get("foreign_buy_value", 0.0) or 0.0)
+    foreign_sell_value = float(last.get("foreign_sell_value", 0.0) or 0.0)
+    foreign_net_value = round(foreign_buy_value - foreign_sell_value, 2)
+
+    w5 = rows[-min(5, len(rows)):]
+    foreign_net_value_5d = round(
+        sum(
+            float(r.get("foreign_buy_value", 0.0) or 0.0) - float(r.get("foreign_sell_value", 0.0) or 0.0)
+            for r in w5
+        ),
+        2,
+    )
+    foreign_room = int(last.get("foreign_room", 0) or 0)
+
+    # 20-session support & resistance
+    w20 = rows[-min(20, len(rows)):]
+    valid_closes_20 = [float(r["close"]) for r in w20 if r.get("close") is not None]
+    latest_close = float(last.get("close", 0.0) or 0.0)
+
+    if valid_closes_20:
+        support_level = round(float(min(valid_closes_20)), 2)
+        resistance_level = round(float(max(valid_closes_20)), 2)
+    else:
+        support_level = round(latest_close, 2)
+        resistance_level = round(latest_close, 2)
+
+    distance_to_support_pct = (
+        round(((latest_close - support_level) / support_level) * 100, 2) if support_level > 0 else 0.0
+    )
+    distance_to_resistance_pct = (
+        round(((resistance_level - latest_close) / resistance_level) * 100, 2) if resistance_level > 0 else 0.0
+    )
+
+    # Realized close-to-close annual volatility if >= 10 rows (fallback 25.0)
+    valid_all_closes = [float(r["close"]) for r in rows if r.get("close") is not None and float(r["close"]) > 0]
+    if len(valid_all_closes) >= 10:
+        tail_closes = valid_all_closes[-min(21, len(valid_all_closes)):]
+        log_rets = [np.log(tail_closes[i] / tail_closes[i - 1]) for i in range(1, len(tail_closes))]
+        if len(log_rets) >= 2:
+            daily_std = float(np.std(log_rets, ddof=1)) * 100.0
+            volatility_annualized_pct = round(daily_std * float(np.sqrt(252)), 2)
+        else:
+            volatility_annualized_pct = 25.0
+    else:
+        volatility_annualized_pct = 25.0
+
+    suggested_stop_distance_pct = round(volatility_annualized_pct / 8.0, 2)
+
+    return {
+        "matched_volume": matched_volume,
+        "matched_value": matched_value,
+        "buy_volume": buy_volume,
+        "sell_volume": sell_volume,
+        "buy_sell_imbalance": buy_sell_imbalance,
+        "foreign_buy_value": foreign_buy_value,
+        "foreign_sell_value": foreign_sell_value,
+        "foreign_net_value": foreign_net_value,
+        "foreign_net_value_5d": foreign_net_value_5d,
+        "foreign_room": foreign_room,
+        "support_level": support_level,
+        "resistance_level": resistance_level,
+        "distance_to_support_pct": distance_to_support_pct,
+        "distance_to_resistance_pct": distance_to_resistance_pct,
+        "volatility_annualized_pct": volatility_annualized_pct,
+        "suggested_stop_distance_pct": suggested_stop_distance_pct,
+    }
+
+
 def screen_and_rank(
     universe_data: dict[str, list[dict]],
     strategy: str = "momentum_breakout",
@@ -497,14 +600,32 @@ def screen_and_rank(
             "price_change_pct": c["price_change_pct"],
             "key_signals": c["key_signals"],
             "highlights": c["highlights"],
+            "details": _extract_candidate_flow_and_levels(universe_data.get(c["symbol"], [])),
         }
         ranked.append(entry)
+
+    top_candidate_details = None
+    if ranked:
+        top = ranked[0]
+        top_candidate_details = {
+            "symbol": top["symbol"],
+            "price": top["price"],
+            "score": top["score"],
+            "price_change_pct": top["price_change_pct"],
+            "key_signals": top["key_signals"],
+            **top["details"],
+        }
 
     return {
         "universe_size": universe_size,
         "scanned_count": len(universe_data),
         "strategy_used": strategy,
         "timeframe": timeframe,
+        "single_shot_notice": (
+            "Toàn bộ thông số kỹ thuật, lệnh chủ động mua/bán, khối ngoại và hỗ trợ/kháng cự "
+            "của mã dẫn đầu đã có trong kết quả này. Không cần gọi thêm analyze_multi_horizon."
+        ),
+        "top_candidate_details": top_candidate_details,
         "ranked_candidates": ranked,
     }
 

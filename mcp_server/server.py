@@ -812,7 +812,8 @@ def compare_tickers(
         "Screen and rank tickers from a universe (e.g. 'vn30' or custom ticker list) "
         "according to a quantitative technical strategy: 'momentum_breakout', 'oversold_reversal', "
         "'foreign_accumulation', or 'intraday_breakout' (1h bars). Returns top_n ranked candidates "
-        "with composite scores (0-100), key signals, and technical highlights."
+        "and includes complete top_candidate_details (active buy/sell volume, 5-session foreign net flow, "
+        "support/resistance levels, stop loss) for the #1 candidate. DO NOT make follow-up calls to analyze_multi_horizon."
     )
 )
 def screen_and_rank(
@@ -882,8 +883,8 @@ def screen_and_rank(
 @server.tool(
     description=(
         "Scan foreign investor money flow across a universe (e.g. 'vn30' or custom ticker list) "
-        "over a rolling window of trading sessions (default 5 days). Computes net buying/selling value "
-        "in VND, foreign participation %, and warns about foreign room exhaustion."
+        "over a rolling window of trading sessions (default 5 days). Returns top foreign buyers, "
+        "sellers, and room warnings in a single call. DO NOT repeat call."
     )
 )
 def scan_foreign_flow(

@@ -355,7 +355,14 @@ Quy tắc:
 
 ## CHẾ ĐỘ 5: GỢI Ý & XẾP HẠNG CỔ PHIẾU (SMART SCREENER)
 
-Áp dụng khi người dùng yêu cầu lọc, tìm kiếm hoặc xếp hạng các mã trong danh mục / VN30. Cấu trúc phản hồi tuân thủ nghiêm ngặt 4 phần:
+Áp dụng khi người dùng yêu cầu lọc, tìm kiếm hoặc xếp hạng các mã trong danh mục hoặc rổ VN30. Cấu trúc phản hồi tuân thủ nghiêm ngặt 4 phần.
+
+#### ⚡ QUY TẮC BẮT BUỘC CHO MÔ HÌNH (Gemma, Local LLM, Cloud):
+1. **Chỉ gọi đúng 1 lần công cụ duy nhất (Single-shot Tool Call):** Gọi `screen_and_rank(strategy=..., top_n=...)`. Luôn để `universe="vn30"` mặc định, tuyệt đối không tự động liệt kê mảng 30 mã.
+2. **Không gọi lại nếu thiếu mã:** Nếu số lượng mã trả về ít hơn `top_n` (do cơ sở dữ liệu chỉ có sẵn dữ liệu của một số mã trong rổ), tuyệt đối không gọi lại công cụ. Hãy dùng toàn bộ số mã thực tế có để lập bảng và trình bày.
+3. **Tuyệt đối không gọi thêm công cụ đào sâu (No Tool Chaining):**
+   - Tuyệt đối không gọi `analyze_multi_horizon` sau khi có kết quả `screen_and_rank`.
+   - Mọi số liệu về lệnh mua/bán chủ động, dòng vốn ngoại 5 phiên, ngưỡng hỗ trợ/kháng cự và biên độ cắt lỗ của mã top 1 đã được tính sẵn trong trường `top_candidate_details`. Hãy đọc trực tiếp từ trường này để viết Mục 3 và Mục 4.
 
 ### 1. Tóm tắt
 - Nêu rõ chiến lược áp dụng (ví dụ: Đà tăng bứt phá - Momentum Breakout), rổ cổ phiếu khảo sát (VN30 với N mã), và danh sách top mã dẫn đầu.
@@ -366,20 +373,27 @@ Quy tắc:
 - Phân tích ngắn gọn luận điểm của từng mã: vị thế giá so với SMA20, chỉ số RSI, tỷ lệ khối lượng đột biến (Volume Ratio), trạng thái MACD.
 
 ### 3. Điểm nhấn dòng tiền & Khung 1H (Mã dẫn đầu)
-- Đào sâu phân tích mã xếp hạng 1:
-  - Hành vi khớp lệnh và lực mua chủ động.
-  - Vị thế dòng tiền khối ngoại và trạng thái room.
+- Đọc trực tiếp từ `top_candidate_details` (hoặc `details` của mã hạng 1):
+  - Khối lượng khớp lệnh, giá trị giao dịch, khối lượng mua chủ động và bán chủ động.
+  - Vị thế dòng tiền khối ngoại phiên gần nhất và lũy kế 5 phiên, trạng thái room ngoại.
   - Diễn biến khung 1 giờ (1H) nếu có tín hiệu bứt phá trong ngày.
 
 ### 4. Rủi ro & Ngưỡng quản trị
-- Xác định rõ ngưỡng hỗ trợ / ngưỡng cắt lỗ kỹ thuật cho từng mã trong top nếu kịch bản bứt phá bị phủ định.
-- Lưu ý nguyên tắc T+2.5 của thị trường Việt Nam.
+- Xác định rõ ngưỡng hỗ trợ, kháng cự và biên độ dừng lỗ kỹ thuật (`suggested_stop_distance_pct`) cho từng mã trong top nếu kịch bản bứt phá bị phủ định.
+- Lưu ý nguyên tắc chu kỳ thanh toán T+2,5 của thị trường chứng khoán Việt Nam.
 
 ---
 
 ## CHẾ ĐỘ 6: QUÉT DÒNG TIỀN KHỐI NGOẠI (FOREIGN FLOW SCANNER)
 
-Áp dụng khi người dùng yêu cầu quét dòng tiền ngoại và cảnh báo room trên toàn rổ cổ phiếu:
+Áp dụng khi người dùng yêu cầu quét dòng tiền ngoại và cảnh báo room trên toàn rổ cổ phiếu.
+
+#### ⚡ QUY TẮC BẮT BUỘC CHO MÔ HÌNH:
+1. **Chỉ gọi đúng 1 lần công cụ:** Gọi `scan_foreign_flow(window_days=..., top_n=...)`. Luôn để `universe="vn30"` mặc định, tuyệt đối không tự động liệt kê mảng 30 mã.
+2. **Không gọi lại nếu thiếu mã:** Nếu số lượng mã trả về ít hơn `top_n`, tuyệt đối không gọi lại công cụ.
+3. **Không gọi thêm công cụ phụ:** Mọi thông tin cần thiết về mua ròng, bán ròng và room ngoại đã có đầy đủ trong kết quả của `scan_foreign_flow`.
+
+### Cấu trúc trình bày:
 1. **Tóm tắt dòng vốn:** Tổng giá trị mua/bán ròng của khối ngoại trong cửa sổ quan sát (ví dụ 5 phiên).
 2. **Top gom ròng:** Bảng top cổ phiếu được mua ròng mạnh nhất (giá trị tỷ VNĐ, % thanh khoản tham gia).
 3. **Top xả ròng:** Bảng top cổ phiếu bị bán ròng lớn nhất.
