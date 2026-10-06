@@ -166,8 +166,40 @@ def _load_rows(source: RowSource) -> tuple[list[dict], str | None, dict | None]:
         return rows_as_dicts(source.rows), None, None
     ticker = (source.ticker or "").upper()
     as_of = getattr(source, "as_of", None)
+    timeframe = getattr(source, "timeframe", "1d")
     conn = store.connect()
     try:
+        if timeframe == "1h":
+            hourly_rows = store.get_recent_hourly(conn, ticker, source.lookback_days)
+            if not hourly_rows:
+                available = store.list_tickers(conn)
+                return [], ticker, {
+                    "error": "unknown_ticker",
+                    "ticker": ticker,
+                    "timeframe": "1h",
+                    "message": f"no stored hourly rows for {ticker}",
+                    "available_tickers": available,
+                }
+            adapted = []
+            for i, h in enumerate(hourly_rows):
+                item = dict(h)
+                item["date"] = h["datetime"]
+                item["prev_close"] = hourly_rows[i - 1]["close"] if i > 0 else h["open"]
+                item["total_volume"] = h["volume"]
+                item["total_value"] = h["value"]
+                item["total_trade"] = 0
+                item["buy_count"] = 0
+                item["sell_count"] = 0
+                item["buy_volume"] = 0
+                item["sell_volume"] = 0
+                item["foreign_buy_volume"] = 0
+                item["foreign_sell_volume"] = 0
+                item["foreign_buy_value"] = 0.0
+                item["foreign_sell_value"] = 0.0
+                item["foreign_room"] = 0
+                adapted.append(item)
+            return adapted, ticker, None
+
         if as_of:
             history = store.get_range(conn, ticker, None, as_of)
             rows = history[-source.lookback_days:]
@@ -240,12 +272,23 @@ def get_price_data(
     lookback_days: int = 300,
     start: str | None = None,
     end: str | None = None,
+    timeframe: str = "1d",
 ) -> dict:
     started = time.perf_counter()
-    arguments = {"ticker": ticker, "lookback_days": lookback_days, "start": start, "end": end}
+    arguments = {
+        "ticker": ticker,
+        "lookback_days": lookback_days,
+        "start": start,
+        "end": end,
+        "timeframe": timeframe,
+    }
     try:
         params = GetPriceDataInput(
-            ticker=ticker, lookback_days=lookback_days, start=start, end=end
+            ticker=ticker,
+            lookback_days=lookback_days,
+            start=start,
+            end=end,
+            timeframe=timeframe,
         )
     except ValidationError as exc:
         error = _validation_error(exc)
@@ -260,7 +303,13 @@ def get_price_data(
     conn = store.connect()
     try:
         available = store.list_tickers(conn)
-        if params.start or params.end:
+        if params.timeframe == "1h":
+            if params.start or params.end:
+                rows = store.get_hourly_range(conn, params.ticker, params.start, params.end)
+            else:
+                rows = store.get_recent_hourly(conn, params.ticker, params.lookback_days)
+            fell_back_from_range = False
+        elif params.start or params.end:
             rows = store.get_range(conn, params.ticker, params.start, params.end)
             if not rows and params.ticker in available:
                 # Caller asked for recent rows but also supplied a date range the
@@ -296,6 +345,7 @@ def get_price_data(
     if not rows:
         result = {
             "ticker": params.ticker,
+            "timeframe": params.timeframe,
             "rows": [],
             "row_count": 0,
             "error": "no_rows",
@@ -303,10 +353,12 @@ def get_price_data(
             "available_tickers": available,
         }
     else:
+        date_key = "datetime" if params.timeframe == "1h" and "datetime" in rows[0] else "date"
         result = {
             "ticker": params.ticker,
+            "timeframe": params.timeframe,
             "row_count": len(rows),
-            "date_range": {"start": rows[0]["date"], "end": rows[-1]["date"]},
+            "date_range": {"start": rows[0][date_key], "end": rows[-1][date_key]},
             "rows": [{k: v for k, v in row.items() if k != "ticker"} for row in rows],
         }
         if date_span is not None:
@@ -343,6 +395,7 @@ def compute_indicators(
     params: dict | None = None,
     series_tail: int = 20,
     as_of: str | None = None,
+    timeframe: str = "1d",
 ) -> dict:
     started = time.perf_counter()
     arguments = {
@@ -353,6 +406,7 @@ def compute_indicators(
         "params": params,
         "series_tail": series_tail,
         "as_of": as_of,
+        "timeframe": timeframe,
     }
     try:
         request = ComputeIndicatorsInput(
@@ -363,6 +417,7 @@ def compute_indicators(
             params=params,
             series_tail=series_tail,
             as_of=as_of,
+            timeframe=timeframe,
         )
     except ValidationError as exc:
         error = _validation_error(exc)
@@ -386,6 +441,7 @@ def compute_indicators(
         raise ToolError(str(exc)) from exc
 
     result["ticker"] = resolved_ticker or _ticker_hint(request)
+    result["timeframe"] = request.timeframe
     result["groups_requested"] = list(request.groups)
     as_of_meta = _as_of_meta(request, resolved)
     if as_of_meta:

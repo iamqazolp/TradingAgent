@@ -124,9 +124,18 @@ def rows_to_frame(rows: list[dict]) -> pd.DataFrame:
 
 
 def _iso_date(value: Any) -> str:
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, datetime):
+        return (
+            value.strftime("%Y-%m-%d %H:%M:%S")
+            if (value.hour or value.minute or value.second)
+            else value.strftime("%Y-%m-%d")
+        )
+    if isinstance(value, date):
         return value.strftime("%Y-%m-%d")
-    return str(value)[:10]
+    s = str(value).strip()
+    if " " in s or "T" in s:
+        return s.replace("T", " ")[:19]
+    return s[:10]
 
 
 def derived_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -698,7 +707,7 @@ def data_quality(frame: pd.DataFrame, gap_threshold_days: int = 5) -> dict:
     parsed: list[date | None] = []
     for value in dates:
         try:
-            parsed.append(datetime.strptime(value, "%Y-%m-%d").date())
+            parsed.append(datetime.strptime(value[:10], "%Y-%m-%d").date())
         except ValueError:
             parsed.append(None)
     for i in range(1, len(parsed)):

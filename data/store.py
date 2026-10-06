@@ -1,12 +1,4 @@
-"""SQLite store for daily trading statistics and market indices.
-
-Tables:
-- `daily_prices`, keyed on (ticker, date). Supports OHLCV.
-- `market_indices`, keyed on (exchange, date).
-
-Writes are upserts so re-ingesting the same day is idempotent. Reads return
-plain dicts in ascending date order.
-"""
+"""SQLite store for daily trading statistics, hourly bars, snapshots, and market indices."""
 
 from __future__ import annotations
 
@@ -41,6 +33,28 @@ COLUMNS: tuple[str, ...] = (
     "foreign_room",
 )
 
+HOURLY_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "datetime",
+    "date",
+    "session_index",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "value",
+    "is_closed",
+)
+
+SNAPSHOT_COLUMNS: tuple[str, ...] = (
+    "ticker",
+    "timestamp",
+    "price",
+    "accumulated_volume",
+    "accumulated_value",
+)
+
 MARKET_INDEX_COLUMNS: tuple[str, ...] = (
     "exchange",
     "date",
@@ -63,6 +77,28 @@ ON CONFLICT(ticker, date) DO UPDATE SET {updates}
     cols=", ".join(COLUMNS),
     placeholders=", ".join(f":{c}" for c in COLUMNS),
     updates=", ".join(f"{c}=excluded.{c}" for c in COLUMNS if c not in ("ticker", "date")),
+)
+
+_UPSERT_HOURLY_SQL = """
+INSERT INTO hourly_bars ({cols})
+VALUES ({placeholders})
+ON CONFLICT(ticker, datetime) DO UPDATE SET {updates}
+""".format(
+    cols=", ".join(HOURLY_COLUMNS),
+    placeholders=", ".join(f":{c}" for c in HOURLY_COLUMNS),
+    updates=", ".join(
+        f"{c}=excluded.{c}"
+        for c in HOURLY_COLUMNS
+        if c not in ("ticker", "datetime")
+    ),
+)
+
+_INSERT_SNAPSHOT_SQL = """
+INSERT OR REPLACE INTO realtime_snapshots ({cols})
+VALUES ({placeholders})
+""".format(
+    cols=", ".join(SNAPSHOT_COLUMNS),
+    placeholders=", ".join(f":{c}" for c in SNAPSHOT_COLUMNS),
 )
 
 _UPSERT_MARKET_INDICES_SQL = """
@@ -114,8 +150,11 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def upsert_rows(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
-    """Insert or update rows. Returns the number of rows written."""
-    payload = [{c: row.get(c, None) for c in COLUMNS} for row in rows]
+    """Insert or update daily rows. Returns the number of rows written."""
+    payload = []
+    for r in rows:
+        row_dict = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+        payload.append({c: row_dict.get(c, None) for c in COLUMNS})
     if not payload:
         return 0
     conn.executemany(_UPSERT_SQL, payload)
@@ -182,6 +221,106 @@ def date_bounds(conn: sqlite3.Connection, ticker: str) -> tuple[str | None, str 
 def rows_to_columns(rows: Sequence[dict]) -> dict[str, list]:
     """Transpose row dicts into column lists. Convenience for callers building frames."""
     return {c: [row.get(c, None) for row in rows] for c in COLUMNS}
+
+
+# --------------------------------------------------------------------------- hourly bars
+
+
+def upsert_hourly_bars(conn: sqlite3.Connection, rows: Iterable[dict | Any]) -> int:
+    """Insert or update 1-hour bars. Returns the number of bars written."""
+    payload = []
+    for r in rows:
+        row_dict = r.to_dict() if hasattr(r, "to_dict") else dict(r)
+        if "ticker" in row_dict:
+            row_dict["ticker"] = str(row_dict["ticker"]).upper()
+        payload.append({c: row_dict.get(c, None) for c in HOURLY_COLUMNS})
+    if not payload:
+        return 0
+    conn.executemany(_UPSERT_HOURLY_SQL, payload)
+    conn.commit()
+    return len(payload)
+
+
+def get_recent_hourly(
+    conn: sqlite3.Connection, ticker: str, lookback_hours: int
+) -> list[dict]:
+    """The most recent `lookback_hours` 1H bars for `ticker`, oldest first."""
+    if lookback_hours <= 0:
+        return []
+    sql = (
+        f"SELECT {', '.join(HOURLY_COLUMNS)} FROM hourly_bars "
+        "WHERE ticker = ? ORDER BY datetime DESC LIMIT ?"
+    )
+    rows = [dict(r) for r in conn.execute(sql, (ticker.upper(), lookback_hours))]
+    rows.reverse()
+    return rows
+
+
+def get_hourly_range(
+    conn: sqlite3.Connection,
+    ticker: str,
+    start: str | None = None,
+    end: str | None = None,
+) -> list[dict]:
+    """1H bars for `ticker` between `start` and `end` (datetime or date prefix), oldest first."""
+    sql = f"SELECT {', '.join(HOURLY_COLUMNS)} FROM hourly_bars WHERE ticker = ?"
+    params: list[object] = [ticker.upper()]
+    if start:
+        start_dt = f"{start} 00:00:00" if len(start) == 10 else start
+        sql += " AND datetime >= ?"
+        params.append(start_dt)
+    if end:
+        end_dt = f"{end} 23:59:59" if len(end) == 10 else end
+        sql += " AND datetime <= ?"
+        params.append(end_dt)
+    sql += " ORDER BY datetime ASC"
+    return [dict(r) for r in conn.execute(sql, params)]
+
+
+def get_hourly_bar(
+    conn: sqlite3.Connection, ticker: str, datetime_str: str
+) -> dict | None:
+    """Retrieve a single hourly bar by (ticker, datetime)."""
+    sql = f"SELECT {', '.join(HOURLY_COLUMNS)} FROM hourly_bars WHERE ticker = ? AND datetime = ?"
+    row = conn.execute(sql, (ticker.upper(), datetime_str)).fetchone()
+    return dict(row) if row else None
+
+
+def hourly_row_count(conn: sqlite3.Connection, ticker: str | None = None) -> int:
+    """Stored hourly bar count, overall or for one ticker."""
+    if ticker is None:
+        return int(conn.execute("SELECT COUNT(*) FROM hourly_bars").fetchone()[0])
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM hourly_bars WHERE ticker = ?", (ticker.upper(),)
+        ).fetchone()[0]
+    )
+
+
+# --------------------------------------------------------------------------- realtime snapshots
+
+
+def insert_snapshot(conn: sqlite3.Connection, snapshot: dict | Any) -> None:
+    """Insert or replace a realtime market snapshot."""
+    snap_dict = snapshot.to_dict() if hasattr(snapshot, "to_dict") else dict(snapshot)
+    if "ticker" in snap_dict:
+        snap_dict["ticker"] = str(snap_dict["ticker"]).upper()
+    payload = {c: snap_dict.get(c, None) for c in SNAPSHOT_COLUMNS}
+    conn.execute(_INSERT_SNAPSHOT_SQL, payload)
+    conn.commit()
+
+
+def get_snapshots(
+    conn: sqlite3.Connection, ticker: str, date: str | None = None
+) -> list[dict]:
+    """Retrieve stored snapshots for `ticker`, optionally filtered by date prefix."""
+    sql = f"SELECT {', '.join(SNAPSHOT_COLUMNS)} FROM realtime_snapshots WHERE ticker = ?"
+    params: list[object] = [ticker.upper()]
+    if date:
+        sql += " AND timestamp LIKE ?"
+        params.append(f"{date}%")
+    sql += " ORDER BY timestamp ASC"
+    return [dict(r) for r in conn.execute(sql, params)]
 
 
 # --------------------------------------------------------------------------- market indices

@@ -29,34 +29,39 @@ def _check_iso(value: str | None) -> str | None:
 
 
 class PriceRow(BaseModel):
-    """One stored trading day, as returned by `get_price_data`."""
+    """One stored trading day or hourly bar, as returned by `get_price_data`."""
 
     model_config = ConfigDict(extra="ignore")
 
-    date: IsoDate
-    prev_close: float = Field(gt=0, description="previous close, VND")
+    date: str
+    datetime: str | None = None
+    session_index: int | None = None
+    prev_close: float | None = Field(default=None, description="previous close, VND")
     open: float | None = Field(default=None, description="open price, VND")
     high: float | None = Field(default=None, description="high price, VND")
     low: float | None = Field(default=None, description="low price, VND")
     close: float = Field(gt=0, description="close, VND")
-    total_trade: int = Field(ge=0, description="matched trade count")
-    total_value: float = Field(ge=0, description="total traded value, VND")
-    total_volume: int = Field(ge=0, description="total traded volume, shares")
-    buy_count: int = Field(ge=0)
-    sell_count: int = Field(ge=0)
-    buy_volume: int = Field(ge=0)
-    sell_volume: int = Field(ge=0)
-    foreign_buy_volume: int = Field(ge=0)
-    foreign_sell_volume: int = Field(ge=0)
-    foreign_buy_value: float = Field(ge=0)
-    foreign_sell_value: float = Field(ge=0)
-    foreign_room: int = Field(ge=0, description="remaining foreign room, shares")
+    volume: int | None = None
+    value: float | None = None
+    total_trade: int = Field(default=0, description="matched trade count")
+    total_value: float = Field(default=0.0, description="total traded value, VND")
+    total_volume: int = Field(default=0, description="total traded volume, shares")
+    buy_count: int = Field(default=0)
+    sell_count: int = Field(default=0)
+    buy_volume: int = Field(default=0)
+    sell_volume: int = Field(default=0)
+    foreign_buy_volume: int = Field(default=0)
+    foreign_sell_volume: int = Field(default=0)
+    foreign_buy_value: float = Field(default=0.0)
+    foreign_sell_value: float = Field(default=0.0)
+    foreign_room: int = Field(default=0, description="remaining foreign room, shares")
     ticker: str | None = None
 
     @field_validator("date")
     @classmethod
     def _valid_date(cls, value: str) -> str:
-        return _check_iso(value)  # type: ignore[return-value]
+        _check_iso(value[:10])
+        return value
 
 
 class RowSource(BaseModel):
@@ -81,6 +86,10 @@ class RowSource(BaseModel):
         ge=2,
         le=5000,
         description="most recent N trading rows (default 300). Trend indicators require at least 200 rows for SMA200.",
+    )
+    timeframe: Literal["1d", "1h"] = Field(
+        default="1d",
+        description="Bar timeframe: '1d' for daily bars (default), '1h' for hourly bars.",
     )
     as_of: IsoDate | None = Field(
         default=None,
@@ -157,6 +166,10 @@ class GetPriceDataInput(BaseModel):
         ge=1,
         le=5000,
         description="most recent N trading rows (e.g. 10 for the last 10 sessions). Use this for any 'recent' or 'last N days' questions.",
+    )
+    timeframe: Literal["1d", "1h"] = Field(
+        default="1d",
+        description="Bar timeframe: '1d' for daily bars (default), '1h' for hourly bars.",
     )
     start: IsoDate | None = Field(
         default=None,

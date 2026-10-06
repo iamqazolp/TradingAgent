@@ -1,24 +1,11 @@
-"""Ingestion for the VietinBank and Stockbiz trading statistics feeds.
+"""Data ingestion module for daily trading statistics.
 
-Every numeric field in the raw response arrives as a string, sometimes with
-thousands separators, sometimes blank. Nothing here relies on JSON number
-parsing: each field is cast explicitly, and anything that cannot be cast is
-either a rejection (for prices) or a logged warning (for reconciliation).
+DEPRECATION NOTICE:
+Legacy VietinBank-specific endpoints ('https://e-trading.vietinbank.vn/...') and
+its ASP.NET envelope format are deprecated. Use the abstract `MarketDataProvider`
+protocol defined in `data.provider` for new API adapters.
 
-Rejection policy
-----------------
-* Missing / unparseable ``PriceClose`` -> row rejected. There is no honest
-  substitute for a close price.
-* Missing / unparseable ``PricePreviousClose`` -> row rejected. ``0`` is not a
-  valid price and would silently poison OBV and every return-based metric.
-* Missing / blank open, high, low fields -> cast to ``None``. Supported for
-  backward compatibility with close-only data.
-* Missing / blank volume, count, value or foreign-room field -> cast to ``0``.
-  In this feed a blank there means "nothing traded on that side", which is
-  ordinary behaviour for small caps, not a data error.
-* ``BuyQuantity + SellQuantity != TotalVolume`` (same for counts) -> warning
-  only. The provider's totals are the source of truth; matched-trade
-  classification can legitimately leave a residual.
+Historical JSON responses and Stockbiz feeds remain supported for backward compatibility.
 """
 
 from __future__ import annotations
@@ -31,6 +18,7 @@ import sqlite3
 import sys
 import urllib.parse
 import urllib.request
+import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -38,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from data import store
+from data.provider import DailyRecord
 from data.stockbiz import StockbizClient
 
 logger = logging.getLogger(__name__)
@@ -307,7 +296,17 @@ def fetch_trading_statistics(
     url: str | None = None,
     timeout: float = 30.0,
 ) -> list[dict]:
-    """Fetch raw records from the live feed."""
+    """Fetch raw records from the live feed.
+
+    .. deprecated::
+        Direct HTTP fetching via TA_AGENT_API_URL is deprecated. Use a
+        `MarketDataProvider` implementation instead.
+    """
+    warnings.warn(
+        "fetch_trading_statistics using legacy URL is deprecated; use MarketDataProvider",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     url = url or os.environ.get("TA_AGENT_API_URL")
     if not url:
         raise IngestError(
@@ -356,13 +355,22 @@ def fetch_trading_statistics(
 
 
 def ingest_records(
-    raws: Sequence[dict], conn: sqlite3.Connection | None = None, *, db_path: str | Path | None = None
+    raws: Sequence[dict | DailyRecord],
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: str | Path | None = None,
 ) -> IngestReport:
-    """Parse and upsert raw records. Re-running with the same input is a no-op."""
+    """Parse and upsert raw records or DailyRecord domain objects. Re-running with the same input is a no-op."""
     owns_conn = conn is None
     conn = conn or store.connect(db_path)
     try:
-        report = parse_records(raws)
+        normalized_raws: list[dict] = []
+        for r in raws:
+            if isinstance(r, DailyRecord):
+                normalized_raws.append(r.to_dict())
+            else:
+                normalized_raws.append(r)
+        report = parse_records(normalized_raws)
         report.written = store.upsert_rows(conn, report.rows)
     finally:
         if owns_conn:
