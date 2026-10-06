@@ -53,6 +53,7 @@ from mcp_server.tool_schemas import (
 )
 from indicators.screener import (
     VN30_TICKERS,
+    normalize_universe,
     scan_foreign_flow as do_scan_foreign_flow,
     screen_and_rank as do_screen_and_rank,
 )
@@ -807,6 +808,18 @@ def compare_tickers(
     return result
 
 
+def _load_universe_data(
+    conn,
+    tickers: list[str],
+    timeframe: str = "1d",
+    lookback: int = 100,
+) -> dict[str, list[dict]]:
+    available = set(store.list_tickers(conn))
+    matching = [t for t in tickers if t in available] or sorted(available)
+    loader = store.get_recent_hourly if timeframe == "1h" else store.get_recent
+    return {sym: loader(conn, sym, lookback) for sym in matching}
+
+
 @server.tool(
     description=(
         "Screen and rank tickers from a universe (e.g. 'vn30' or custom ticker list) "
@@ -840,32 +853,15 @@ def screen_and_rank(
         audit("screen_and_rank", arguments, error=str(error), started=started)
         raise error from exc
 
-    # Parse and normalize universe
-    if isinstance(params.universe, str):
-        u_str = params.universe.strip()
-        if u_str.lower() == "vn30":
-            tickers = list(VN30_TICKERS)
-        else:
-            cleaned = u_str.strip("[]()").replace('"', "").replace("'", "")
-            tickers = [t.strip().upper() for t in cleaned.split(",") if t.strip()]
-    elif isinstance(params.universe, (list, tuple)):
-        tickers = [str(t).strip().upper() for t in params.universe if str(t).strip()]
-    else:
-        tickers = list(VN30_TICKERS)
-
+    tickers = normalize_universe(params.universe)
     conn = store.connect()
     try:
-        available_tickers = set(store.list_tickers(conn))
-        matching = [t for t in tickers if t in available_tickers]
-        if not matching:
-            matching = sorted(list(available_tickers))
-
-        universe_data: dict[str, list[dict]] = {}
-        for sym in matching:
-            if params.timeframe == "1h":
-                universe_data[sym] = store.get_recent_hourly(conn, sym, lookback_hours=60)
-            else:
-                universe_data[sym] = store.get_recent(conn, sym, lookback_days=100)
+        universe_data = _load_universe_data(
+            conn,
+            tickers,
+            timeframe=params.timeframe,
+            lookback=60 if params.timeframe == "1h" else 100,
+        )
     finally:
         conn.close()
 
@@ -908,28 +904,14 @@ def scan_foreign_flow(
         audit("scan_foreign_flow", arguments, error=str(error), started=started)
         raise error from exc
 
-    if isinstance(params.universe, str):
-        u_str = params.universe.strip()
-        if u_str.lower() == "vn30":
-            tickers = list(VN30_TICKERS)
-        else:
-            cleaned = u_str.strip("[]()").replace('"', "").replace("'", "")
-            tickers = [t.strip().upper() for t in cleaned.split(",") if t.strip()]
-    elif isinstance(params.universe, (list, tuple)):
-        tickers = [str(t).strip().upper() for t in params.universe if str(t).strip()]
-    else:
-        tickers = list(VN30_TICKERS)
-
+    tickers = normalize_universe(params.universe)
     conn = store.connect()
     try:
-        available_tickers = set(store.list_tickers(conn))
-        matching = [t for t in tickers if t in available_tickers]
-        if not matching:
-            matching = sorted(list(available_tickers))
-
-        universe_data: dict[str, list[dict]] = {}
-        for sym in matching:
-            universe_data[sym] = store.get_recent(conn, sym, lookback_days=max(params.window_days * 2, 20))
+        universe_data = _load_universe_data(
+            conn,
+            tickers,
+            lookback=max(params.window_days * 2, 20),
+        )
     finally:
         conn.close()
 

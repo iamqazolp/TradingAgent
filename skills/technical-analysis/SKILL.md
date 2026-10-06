@@ -28,7 +28,7 @@ Hệ thống tính toán đã xử lý sẵn toàn bộ dữ liệu định lư�
 ⚠️ **Phân định đối tượng phân tích:**
 1. **Độ rộng thị trường / Toàn sàn:** Nếu câu hỏi hỏi về thị trường chung, độ rộng thị trường, tương quan mã tăng/giảm, hoặc chế độ thị trường trên các sàn (VNINDEX/HOSE, HNX, UPCOM, hoặc tất cả các sàn) → Gọi ngay công cụ `get_market_breadth(exchange=...)`. Sang **Chế độ 4**. **Xong.**
 2. **So sánh đối đầu kỹ thuật (2 đến 5 mã cổ phiếu):** Nếu câu hỏi yêu cầu so sánh, đối chiếu sức mạnh kỹ thuật, xu hướng hoặc lựa chọn giữa 2 đến 5 mã cổ phiếu (ví dụ: *"So sánh VNM và HPG"*, *"Nên chọn HPG hay TNG xét về kỹ thuật?"*, *"So sánh tương quan SSI, VND và VCI"*) → Gọi ngay công cụ `compare_tickers(tickers=['VNM', 'HPG'])`. Sang **Chế độ 2**. **Xong.**
-3. **Lọc, xếp hạng & gợi ý cổ phiếu (Smart Screener & Ranker):** Nếu câu hỏi yêu cầu gợi ý, xếp hạng, tìm kiếm mã mạnh nhất trong rổ cổ phiếu (ví dụ: *"Gợi ý 3 mã tốt nhất trong VN30"*, *"Xếp hạng các mã theo đà bứt phá momentum"*, *"Mã nào đang có dòng tiền vào mạnh nhất?"*, *"Lọc mã quá bán đảo chiều"*):
+3. **Lọc, xếp hạng & gợi ý cổ phiếu:** Nếu câu hỏi yêu cầu gợi ý, xếp hạng, tìm kiếm mã mạnh nhất trong rổ cổ phiếu (ví dụ: *"Gợi ý 3 mã tốt nhất trong VN30"*, *"Xếp hạng các mã theo đà bứt phá momentum"*, *"Mã nào đang có dòng tiền vào mạnh nhất?"*, *"Lọc mã quá bán đảo chiều"*):
    → Gọi ngay công cụ `screen_and_rank(universe="vn30", strategy="...", top_n=3)`.
    - Các chiến lược tương ứng:
      - `momentum_breakout`: Đà tăng bứt phá, vượt SMA20, volume đột biến, MACD cắt lên.
@@ -335,7 +335,7 @@ Quy tắc:
 
 ---
 
-## CHẾ ĐỘ 5: GỢI Ý & XẾP HẠNG CỔ PHIẾU (SMART SCREENER)
+## CHẾ ĐỘ 5: GỢI Ý & XẾP HẠNG CỔ PHIẾU 
 
 Áp dụng khi người dùng yêu cầu lọc, tìm kiếm hoặc xếp hạng các mã trong danh mục / VN30. Cấu trúc phản hồi tuân thủ nghiêm ngặt 4 phần:
 

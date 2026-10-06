@@ -36,6 +36,19 @@ MIN_ROWS_REQUIRED = {
 }
 
 
+def normalize_universe(universe: list[str] | str) -> list[str]:
+    """Normalize user-supplied universe into a list of uppercase ticker symbols."""
+    if isinstance(universe, str):
+        u_str = universe.strip()
+        if u_str.lower() == "vn30":
+            return list(VN30_TICKERS)
+        cleaned = u_str.strip("[]()").replace('"', "").replace("'", "")
+        return [t.strip().upper() for t in cleaned.split(",") if t.strip()]
+    if isinstance(universe, (list, tuple)):
+        return [str(t).strip().upper() for t in universe if str(t).strip()]
+    return list(VN30_TICKERS)
+
+
 def _rows_to_df(rows: list[dict]) -> pd.DataFrame:
     """Safely convert rows (daily or hourly) into a clean pandas DataFrame."""
     if not rows:
@@ -157,16 +170,13 @@ def _score_momentum_breakout(frame: pd.DataFrame) -> tuple[float, list[str], dic
             else:
                 macd_score = 0.0
     elif len(close) >= 20:
-        try:
-            macd_res = macd(close, 8, 17, 9)
-            if not is_insufficient(macd_res):
-                crossover = macd_res.get("crossover", "none")
-                hist = macd_res.get("latest", {}).get("histogram")
-                if crossover == "bullish_cross" or (hist is not None and hist > 0):
-                    macd_score = 20.0
-                    key_signals.append("MACD phân kỳ dương")
-        except Exception:
-            pass
+        macd_res = macd(close, 8, 17, 9)
+        if not is_insufficient(macd_res):
+            crossover = macd_res.get("crossover", "none")
+            hist = macd_res.get("latest", {}).get("histogram")
+            if crossover == "bullish_cross" or (hist is not None and hist > 0):
+                macd_score = 20.0
+                key_signals.append("MACD phân kỳ dương")
 
     highlights["macd_histogram"] = round(hist, 2) if hist is not None else None
     highlights["macd_crossover"] = crossover
@@ -487,9 +497,8 @@ def screen_and_rank(
     # Sort descending by score, tie-break by price_change_pct descending, then symbol
     candidates.sort(key=lambda x: (x["score"], x["price_change_pct"]), reverse=True)
 
-    ranked: list[dict[str, Any]] = []
-    for i, c in enumerate(candidates[:top_n]):
-        entry = {
+    ranked_candidates = [
+        {
             "rank": i + 1,
             "symbol": c["symbol"],
             "score": c["score"],
@@ -498,14 +507,15 @@ def screen_and_rank(
             "key_signals": c["key_signals"],
             "highlights": c["highlights"],
         }
-        ranked.append(entry)
+        for i, c in enumerate(candidates[:top_n])
+    ]
 
     return {
         "universe_size": universe_size,
         "scanned_count": len(universe_data),
         "strategy_used": strategy,
         "timeframe": timeframe,
-        "ranked_candidates": ranked,
+        "ranked_candidates": ranked_candidates,
     }
 
 
@@ -575,9 +585,8 @@ def scan_foreign_flow(
     if not buyers:
         buyers = sorted(items, key=lambda x: x["net_value_vnd"], reverse=True)
 
-    top_buyers = []
-    for i, it in enumerate(buyers[:top_n]):
-        top_buyers.append({
+    top_buyers = [
+        {
             "rank": i + 1,
             "symbol": it["symbol"],
             "net_value_vnd": it["net_value_vnd"],
@@ -586,16 +595,17 @@ def scan_foreign_flow(
             "buy_participation_pct": it["buy_participation_pct"],
             "room_remaining": it["room_remaining"],
             "room_exhaustion_warning": it["room_exhaustion_warning"],
-        })
+        }
+        for i, it in enumerate(buyers[:top_n])
+    ]
 
     # Top net sellers: lowest negative net value (most sold)
     sellers = sorted([it for it in items if it["net_value_vnd"] < 0], key=lambda x: x["net_value_vnd"])
     if not sellers:
         sellers = sorted(items, key=lambda x: x["net_value_vnd"])
 
-    top_sellers = []
-    for i, it in enumerate(sellers[:top_n]):
-        top_sellers.append({
+    top_sellers = [
+        {
             "rank": i + 1,
             "symbol": it["symbol"],
             "net_value_vnd": it["net_value_vnd"],
@@ -603,7 +613,9 @@ def scan_foreign_flow(
             "net_volume": it["net_volume"],
             "sell_participation_pct": it["sell_participation_pct"],
             "room_remaining": it["room_remaining"],
-        })
+        }
+        for i, it in enumerate(sellers[:top_n])
+    ]
 
     return {
         "universe_size": universe_size,
