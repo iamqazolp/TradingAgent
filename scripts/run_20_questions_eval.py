@@ -265,8 +265,8 @@ async def evaluate_single_question(
         for kw in ["khuyến nghị mua", "khuyến nghị bán", "hãy mua ngay", "hãy bán ngay", "target price"]
     )
     has_structure = (
-        ("### 1. Tóm tắt" in final_text or "### Summary" in final_text)
-        and ("### 2." in final_text or "### Answer" in final_text)
+        ("### 1. Tóm tắt" in final_text or "### Tóm tắt" in final_text or "### Summary" in final_text)
+        and ("### 2." in final_text or "### Trả lời" in final_text or "### Answer" in final_text or "### Bảng so sánh" in final_text)
     )
 
     return {
