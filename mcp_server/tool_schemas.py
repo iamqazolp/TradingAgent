@@ -457,6 +457,54 @@ class GetMarketBreadthInput(BaseModel):
         return value.strip().upper()
 
 
+class ScreenAndRankInput(BaseModel):
+    """Input for `screen_and_rank`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    universe: list[str] | str = Field(
+        default="vn30",
+        description="Ticker list (e.g. ['HPG', 'VNM'] or 'HPG,VNM') or 'vn30' for standard VN30 universe.",
+    )
+    strategy: Literal[
+        "momentum_breakout",
+        "oversold_reversal",
+        "foreign_accumulation",
+        "intraday_breakout",
+    ] = Field(
+        default="momentum_breakout",
+        description="Technical screening strategy.",
+    )
+    timeframe: Literal["1d", "1h"] = Field(
+        default="1d",
+        description="Bar timeframe: '1d' for daily bars (default), '1h' for hourly bars.",
+    )
+    top_n: int = Field(default=3, ge=1, le=10, description="Top N ranked tickers to return.")
+
+
+class ScanForeignFlowInput(BaseModel):
+    """Input for `scan_foreign_flow`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    universe: list[str] | str = Field(
+        default="vn30",
+        description="Ticker list (e.g. ['HPG', 'VNM'] or 'HPG,VNM') or 'vn30' for standard VN30 universe.",
+    )
+    window_days: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Rolling window in trading days to evaluate foreign flow.",
+    )
+    top_n: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Top N net buyers and sellers to return.",
+    )
+
+
 def rows_as_dicts(rows: list[PriceRow]) -> list[dict]:
     """Validated rows back to plain dicts for the engine."""
     return [row.model_dump(exclude_none=True) for row in rows]

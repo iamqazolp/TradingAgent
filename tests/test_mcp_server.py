@@ -83,6 +83,8 @@ def test_the_server_exposes_expected_tools():
         "get_flow_summary",
         "get_market_breadth",
         "get_price_data",
+        "scan_foreign_flow",
+        "screen_and_rank",
     ]
     for tool in tools:
         assert tool.description

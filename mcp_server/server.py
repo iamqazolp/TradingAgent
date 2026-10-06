@@ -47,7 +47,14 @@ from mcp_server.tool_schemas import (
     GetMarketBreadthInput,
     GetPriceDataInput,
     RowSource,
+    ScanForeignFlowInput,
+    ScreenAndRankInput,
     rows_as_dicts,
+)
+from indicators.screener import (
+    VN30_TICKERS,
+    scan_foreign_flow as do_scan_foreign_flow,
+    screen_and_rank as do_screen_and_rank,
 )
 
 logger = logging.getLogger("ta_agent.mcp")
@@ -797,6 +804,141 @@ def compare_tickers(
         detail=params.detail,
     )
     audit("compare_tickers", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Screen and rank tickers from a universe (e.g. 'vn30' or custom ticker list) "
+        "according to a quantitative technical strategy: 'momentum_breakout', 'oversold_reversal', "
+        "'foreign_accumulation', or 'intraday_breakout' (1h bars). Returns top_n ranked candidates "
+        "with composite scores (0-100), key signals, and technical highlights."
+    )
+)
+def screen_and_rank(
+    universe: list[str] | str = "vn30",
+    strategy: str = "momentum_breakout",
+    timeframe: str = "1d",
+    top_n: int = 3,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "universe": universe,
+        "strategy": strategy,
+        "timeframe": timeframe,
+        "top_n": top_n,
+    }
+    try:
+        params = ScreenAndRankInput(
+            universe=universe,
+            strategy=strategy,
+            timeframe=timeframe,
+            top_n=top_n,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("screen_and_rank", arguments, error=str(error), started=started)
+        raise error from exc
+
+    # Parse and normalize universe
+    if isinstance(params.universe, str):
+        u_str = params.universe.strip()
+        if u_str.lower() == "vn30":
+            tickers = list(VN30_TICKERS)
+        else:
+            cleaned = u_str.strip("[]()").replace('"', "").replace("'", "")
+            tickers = [t.strip().upper() for t in cleaned.split(",") if t.strip()]
+    elif isinstance(params.universe, (list, tuple)):
+        tickers = [str(t).strip().upper() for t in params.universe if str(t).strip()]
+    else:
+        tickers = list(VN30_TICKERS)
+
+    conn = store.connect()
+    try:
+        available_tickers = set(store.list_tickers(conn))
+        matching = [t for t in tickers if t in available_tickers]
+        if not matching:
+            matching = sorted(list(available_tickers))
+
+        universe_data: dict[str, list[dict]] = {}
+        for sym in matching:
+            if params.timeframe == "1h":
+                universe_data[sym] = store.get_recent_hourly(conn, sym, lookback_hours=60)
+            else:
+                universe_data[sym] = store.get_recent(conn, sym, lookback_days=100)
+    finally:
+        conn.close()
+
+    result = do_screen_and_rank(
+        universe_data=universe_data,
+        strategy=params.strategy,
+        timeframe=params.timeframe,
+        top_n=params.top_n,
+    )
+    audit("screen_and_rank", arguments, result=result, started=started)
+    return result
+
+
+@server.tool(
+    description=(
+        "Scan foreign investor money flow across a universe (e.g. 'vn30' or custom ticker list) "
+        "over a rolling window of trading sessions (default 5 days). Computes net buying/selling value "
+        "in VND, foreign participation %, and warns about foreign room exhaustion."
+    )
+)
+def scan_foreign_flow(
+    universe: list[str] | str = "vn30",
+    window_days: int = 5,
+    top_n: int = 5,
+) -> dict:
+    started = time.perf_counter()
+    arguments = {
+        "universe": universe,
+        "window_days": window_days,
+        "top_n": top_n,
+    }
+    try:
+        params = ScanForeignFlowInput(
+            universe=universe,
+            window_days=window_days,
+            top_n=top_n,
+        )
+    except ValidationError as exc:
+        error = _validation_error(exc)
+        audit("scan_foreign_flow", arguments, error=str(error), started=started)
+        raise error from exc
+
+    if isinstance(params.universe, str):
+        u_str = params.universe.strip()
+        if u_str.lower() == "vn30":
+            tickers = list(VN30_TICKERS)
+        else:
+            cleaned = u_str.strip("[]()").replace('"', "").replace("'", "")
+            tickers = [t.strip().upper() for t in cleaned.split(",") if t.strip()]
+    elif isinstance(params.universe, (list, tuple)):
+        tickers = [str(t).strip().upper() for t in params.universe if str(t).strip()]
+    else:
+        tickers = list(VN30_TICKERS)
+
+    conn = store.connect()
+    try:
+        available_tickers = set(store.list_tickers(conn))
+        matching = [t for t in tickers if t in available_tickers]
+        if not matching:
+            matching = sorted(list(available_tickers))
+
+        universe_data: dict[str, list[dict]] = {}
+        for sym in matching:
+            universe_data[sym] = store.get_recent(conn, sym, lookback_days=max(params.window_days * 2, 20))
+    finally:
+        conn.close()
+
+    result = do_scan_foreign_flow(
+        universe_data=universe_data,
+        window_days=params.window_days,
+        top_n=params.top_n,
+    )
+    audit("scan_foreign_flow", arguments, result=result, started=started)
     return result
 
 
