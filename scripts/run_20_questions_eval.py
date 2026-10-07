@@ -317,7 +317,7 @@ def generate_report(results: list[dict], model: str) -> str:
     md.append("## 2. Đánh Giá Khả Năng Đáp Ứng 6 Chế Độ Phân Tích")
     md.append("")
     md.append("1. **Chế độ 1 (Phân tích toàn diện & Đa khung thời gian):** Nhận diện chính xác từ khóa ngắn/trung/dài hạn, gọi đúng `scope` hẹp nhất để bảo vệ context.")
-    md.append("2. **Chế độ 2 (So sánh đối đầu 2-5 mã):** Gọi `compare_tickers` đối chiếu tương quan chỉ báo, ma trận giá và thanh khoản mà không thiên vị.")
+    md.append("2. **Chế độ 2 (So sánh kỹ thuật 2-5 mã):** Gọi `compare_tickers` đối chiếu tương quan chỉ báo, ma trận giá và thanh khoản mà không thiên vị.")
     md.append("3. **Chế độ 3 (Tra cứu chỉ báo đơn lẻ & as_of quá khứ):** Gọi đúng nhóm chỉ báo cần thiết (`momentum`, `volatility`, `trend`, `flow`), xử lý chính xác tham số ngày `as_of`.")
     md.append("4. **Chế độ 4 (Độ rộng thị trường sàn & toàn bộ):** Phân tích tương quan mã tăng/giảm, thanh khoản và chế độ thị trường (`bullish`, `neutral`...) từ `market_indices`.")
     md.append("5. **Chế độ 5 (Smart Screener & Intraday 1H):** Sàng lọc danh mục theo 4 chiến lược định lượng (`momentum_breakout`, `oversold_reversal`, `foreign_accumulation`, `intraday_breakout`) trả về bảng xếp hạng điểm số (0-100) và nến 1H.")

@@ -47,7 +47,7 @@ QUESTIONS = [
     },
     {
         "id": 2,
-        "category": "So sánh Đối đầu 3 mã",
+        "category": "So sánh Kỹ thuật 3 mã",
         "mode": "Chế độ 2",
         "question": "So sánh sức mạnh kỹ thuật bộ ba cổ phiếu VNM, HPG và TNG",
         "expected_tool": "compare_tickers",
@@ -68,7 +68,7 @@ QUESTIONS = [
     },
     {
         "id": 5,
-        "category": "So sánh Đối đầu 2 mã",
+        "category": "So sánh Kỹ thuật 2 mã",
         "mode": "Chế độ 2",
         "question": "So sánh kỹ thuật giữa VNM và HPG, mã nào đang giữ cấu trúc xu hướng tốt hơn?",
         "expected_tool": "compare_tickers",
