@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from indicators import finite, safe_div
+from indicators import finite, safe_div, with_vi_labels
 
 
 def market_breadth_summary(market_info_rows: list[dict]) -> dict:
@@ -97,6 +97,10 @@ def market_breadth_summary(market_info_rows: list[dict]) -> dict:
             "unchanged": unchanged,
             "ad_ratio": ad_ratio,
             "breadth_regime": regime,
+            # SKILL.md told the model to read `market_regime`, which this
+            # function never emitted — Chế độ 4 would find nothing and invent a
+            # phrasing. Both names now resolve to the same value.
+            "market_regime": regime,
             "total_value_vnd": tot_val,
             "total_volume": tot_vol,
             "total_trade": tot_trade,
@@ -116,4 +120,4 @@ def market_breadth_summary(market_info_rows: list[dict]) -> dict:
             if k not in res:
                 res[k] = v
 
-    return res
+    return with_vi_labels(res)

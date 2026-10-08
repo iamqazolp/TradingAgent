@@ -155,3 +155,134 @@ def require(series: pd.Series, window: int, what: str) -> dict | None:
             available,
         )
     return None
+
+
+# --------------------------------------------------------------------------- Vietnamese labels
+
+
+#: Machine enums the payload exposes, mapped to the Vietnamese phrasing a report
+#: should use. Kept beside the values rather than inside each group module
+#: because the same enum appears in several groups (``signal_strength`` in every
+#: horizon, ``zone`` in RSI and close percentile, ``bias`` in two flow groups).
+#:
+#: The deployed model is a ~31B local model rendering this payload into prose.
+#: Left to translate them itself it invents a different Vietnamese phrase on
+#: every call — "tiêu cực mạnh", "nghiêng tiêu cực rõ rệt", "mạnh tiêu cực" for
+#: the same ``strong_bearish`` — which is exactly the formulaic drift this
+#: table removes. One canonical phrase per enum.
+VI_LABELS: dict[str, str] = {
+    # signal_strength / trend classification
+    "strong_bullish": "tích cực rõ rệt",
+    "moderate_bullish": "tích cực vừa phải",
+    "lean_bullish": "hơi nghiêng tích cực",
+    "weak_bullish": "tích cực yếu",
+    "bullish": "tích cực",
+    "strong_bearish": "tiêu cực rõ rệt",
+    "moderate_bearish": "tiêu cực vừa phải",
+    "lean_bearish": "hơi nghiêng tiêu cực",
+    "weak_bearish": "tiêu cực yếu",
+    "bearish": "tiêu cực",
+    "neutral": "trung tính",
+    "transitional": "chuyển tiếp",
+    # trend_alignment
+    "aligned_uptrend": "xu hướng tăng đồng thuận (giá trên SMA20 trên SMA50 trên SMA200)",
+    "aligned_downtrend": "xu hướng giảm đồng thuận (giá dưới SMA20 dưới SMA50 dưới SMA200)",
+    "above_sma200_transitional": "đã vượt lên trên đường trung bình 200 phiên",
+    "below_sma200_transitional": "vẫn nằm dưới đường trung bình 200 phiên",
+    "short_term_uptrend": "xu hướng tăng ngắn hạn",
+    "short_term_downtrend": "xu hướng giảm ngắn hạn",
+    # market breadth regime
+    "strongly_bullish": "tích cực mạnh",
+    "strongly_bearish": "tiêu cực mạnh",
+    # direction / bias
+    "rising": "đang đi lên",
+    "falling": "đang đi xuống",
+    "flat": "đi ngang",
+    "buy_side": "bên mua chiếm ưu thế",
+    "sell_side": "bên bán chiếm ưu thế",
+    "balanced": "cân bằng",
+    # momentum zone / streak
+    "overbought": "vùng quá mua",
+    "oversold": "vùng quá bán",
+    "near_high": "sát đỉnh biên độ gần nhất",
+    "near_low": "sát đáy biên độ gần nhất",
+    "middle": "ở giữa biên độ",
+    "up": "tăng",
+    "down": "giảm",
+    # volume ratio flag
+    "very_high": "rất cao",
+    "elevated": "cao hơn bình thường",
+    "very_low": "rất thấp",
+    "low": "thấp hơn bình thường",
+    "normal": "bình thường",
+    # foreign flow stance
+    "net_buying": "mua ròng",
+    "net_selling": "bán ròng",
+    # bollinger position
+    "above_upper": "nằm trên dải trên",
+    "below_lower": "nằm dưới dải dưới",
+    "inside": "nằm trong dải",
+    # crossover
+    "bullish_cross": "cắt tăng",
+    "bearish_cross": "cắt giảm",
+    "none": "không có tín hiệu giao cắt",
+    # return streak flag / horizontal alignment
+    "extended": "kéo dài đáng chú ý",
+    "notable": "đáng chú ý",
+    # volume imbalance bias, trend alignment aliases used by comparisons
+    "strong_uptrend": "tăng mạnh",
+    "strong_downtrend": "giảm mạnh",
+}
+
+
+def vi_label(value: Any) -> str | None:
+    """Vietnamese phrasing for a machine enum, or None when there is no mapping.
+
+    Returns None rather than the input so a caller can tell "this enum has no
+    agreed Vietnamese wording" from "this enum translates to itself".
+    """
+    if not isinstance(value, str):
+        return None
+    return VI_LABELS.get(value)
+
+
+#: Boolean fields whose True/False reads as a technical state rather than a
+#: switch. ``squeeze = True`` printed into a report is code leaking into prose,
+#: so it gets a phrase of its own. Each entry is an explicit (true, false)
+#: pair: Vietnamese negation is not mechanical, so it is written out.
+BOOL_LABELS: dict[str, tuple[str, str]] = {
+    "squeeze": ("dải Bollinger đang co hẹp", "dải Bollinger nới rộng bình thường"),
+}
+
+
+def _bool_label(key: str, value: bool) -> str | None:
+    pair = BOOL_LABELS.get(key)
+    if pair is None:
+        return None
+    return pair[0] if value else pair[1]
+
+
+def with_vi_labels(obj: Any, *, suffix: str = "_vi") -> Any:
+    """Add a ``<key>_vi`` sibling for every machine-enum value in a payload.
+
+    The raw enum is kept alongside it: the skill's paths and every existing
+    test still read the original key, and a Vietnamese-only payload would break
+    them. Nothing is added when there is no mapping, so numbers and dates are
+    untouched.
+    """
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for key, value in obj.items():
+            if isinstance(key, str) and not key.endswith(suffix):
+                label = (
+                    _bool_label(key, value)
+                    if isinstance(value, bool)
+                    else vi_label(value)
+                )
+                if label is not None:
+                    out[key + suffix] = label
+            out[key] = with_vi_labels(value, suffix=suffix)
+        return out
+    if isinstance(obj, list):
+        return [with_vi_labels(item, suffix=suffix) for item in obj]
+    return obj

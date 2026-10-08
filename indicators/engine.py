@@ -12,7 +12,14 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from indicators import finite, insufficient, is_insufficient, safe_div, safe_series_div
+from indicators import (
+    finite,
+    insufficient,
+    is_insufficient,
+    safe_div,
+    safe_series_div,
+    with_vi_labels,
+)
 from indicators.foreign_flow import (
     foreign_flow_group,
     foreign_net_value,
@@ -284,7 +291,7 @@ def _compute_frame(
                 "foreign_net_bil": fnet_b,
             })
 
-    return {
+    return with_vi_labels({
         "rows_used": int(len(frame)),
         "date_range": {"start": str(frame.index[0]), "end": str(frame.index[-1])},
         "latest_close": latest_close,
@@ -295,9 +302,12 @@ def _compute_frame(
         "returns": returns,
         "latest_session": latest_session,
         "recent_history": recent_history,
+        # Group enums (RSI zone, volume flag, MACD crossover, flow bias,
+        # Bollinger position, streak direction) get their Vietnamese phrase
+        # here, in one recursive pass, instead of at ~40 call sites.
         "groups": serialize(results, series_tail=series_tail),
         "data_quality": data_quality(frame),
-    }
+    })
 
 
 _compute_core = _compute_frame
@@ -819,4 +829,3 @@ def prune_series(obj: Any) -> Any:
     if isinstance(obj, list):
         return [prune_series(x) for x in obj]
     return obj
-

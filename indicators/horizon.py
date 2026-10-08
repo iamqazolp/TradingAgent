@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from indicators import finite, is_insufficient, pick
+from indicators import finite, is_insufficient, pick, vi_label, with_vi_labels
 
 # --------------------------------------------------------------------------- extractors
 
@@ -335,8 +335,14 @@ def _aggregate(components: list[dict]) -> dict:
             f"{len(bullish)} nhóm tăng xung đột với {len(bearish)} nhóm giảm"
         )
 
+    strength = _label_for_score(score)
     return {
-        "signal_strength": _label_for_score(score),
+        "signal_strength": strength,
+        # One agreed Vietnamese phrase per enum, so a report rendered from this
+        # payload says "tiêu cực rõ rệt" every time instead of the model
+        # inventing a variant on each call.
+        "signal_strength_vi": vi_label(strength),
+        "confidence_vi": _CONFIDENCE_VI.get(confidence),
         "score": round(score, 3),
         "coverage_pct": round(coverage * 100, 1),
         "agreement_pct": round(agreement * 100, 1),
@@ -1145,6 +1151,11 @@ def _horizon_alignment(
 
 _VI = {"short_term": "ngắn hạn", "mid_term": "trung hạn", "long_term": "dài hạn"}
 
+#: Confidence already arrives in Vietnamese; this exists only so the payload
+#: shape stays uniform (every enum-ish field has a ``_vi`` sibling) and a
+#: consumer can render it without knowing which fields are pre-translated.
+_CONFIDENCE_VI = {"cao": "cao", "trung bình": "trung bình", "thấp": "thấp"}
+
 
 # --------------------------------------------------------------------------- public API
 
@@ -1225,4 +1236,8 @@ def horizon_analysis(
                 "(không phải thiếu dữ liệu)."
             ),
         }
-    return out
+    # Every group-level enum (RSI zone, volume flag, MACD crossover, flow bias,
+    # Bollinger position, streak direction) gets a ``_vi`` sibling here, in one
+    # pass, rather than at each of its ~40 sites. The raw key is preserved so
+    # the skill's documented paths keep resolving.
+    return with_vi_labels(out)
