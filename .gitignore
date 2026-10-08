@@ -8,3 +8,9 @@ logs/
 .pytest_cache/
 # Session state that `oh` writes into the working directory.
 .openharness/
+
+# Secrets and environment configurations
+.env
+.env.local
+.env.*.local
+*.env
